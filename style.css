@@ -472,3 +472,17 @@ input[type=range]::-moz-range-track{background:transparent}
 .list.swap>:not(.home),.list.swap>.home>*{animation:rise .5s ease backwards;animation-delay:var(--d,0s)}
 @media (prefers-reduced-motion:reduce){.intro .head{animation:none!important}}
 .dlg-drive .ghost{align-self:flex-start;padding:10px 14px;font-size:13px}
+
+/* round 4: every list fades in as ONE block (like Videos), never row by row */
+.intro #nav>*,.intro .list>:not(.home),.intro .list>.home>*,.list.swap>:not(.home),.list.swap>.home>*{animation:none}
+.intro .brand,.intro #nav,.intro .side-foot,.intro .top,.intro .head,.intro .list,.intro .detail>*,.intro .player{animation:rise .55s ease backwards}
+.intro .brand{animation-delay:.05s}
+.intro #nav{animation-delay:.12s}
+.intro .top{animation-delay:.1s}
+.intro .head{animation-delay:.16s}
+.intro .list{animation-delay:.22s}
+.intro .detail>*{animation-delay:.28s}
+.intro .side-foot{animation-delay:.3s}
+.intro .player{animation-delay:.36s}
+.list.swap{animation:rise .5s ease}
+@media (prefers-reduced-motion:reduce){.intro *,.list.swap{animation:none!important}}

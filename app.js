@@ -481,7 +481,15 @@ async function loadAllTags() {
   const list = S.base.filter((i) => i.kind === 'audio' && i.section === 'disc' && i.tag === undefined);
   if (!list.length) return;
   let idx = 0;
-  const worker = async () => { while (idx < list.length && run === tagRun) { const it = list[idx++]; it.tag = await readTags(it); } };
+  const worker = async () => {
+    while (idx < list.length && run === tagRun) {
+      const it = list[idx++], f = it.file;
+      const c = f.remote && S.dinfo && S.dinfo.tags[f.id];
+      if (c && c.mod === f.lastModified) { it.tag = c.t; continue; }
+      it.tag = await readTags(it);
+      if (f.remote && S.dinfo) { S.dinfo.tags[f.id] = { mod: f.lastModified, t: it.tag }; dinfoSave(); }
+    }
+  };
   await Promise.all(Array.from({ length: S.drive ? 10 : 3 }, worker));
   if (run !== tagRun) return;
   applyOrdering();
@@ -673,6 +681,18 @@ async function loadVault(entries, name, key) {
     if (again) { S.now = again; S.queue = S.queue.map((q) => S.byPath.get(q.path) || q); }
   }
   S.selected = (prevSelected && S.byPath.get(prevSelected)) || null; /* a fresh start shows an empty details panel */
+  S.dinfo = null;
+  if (S.source === 'drive') {
+    S.dinfo = (await idb.get('dinfo:' + S.metaKey)) || {};
+    if (!S.dinfo.tags) S.dinfo.tags = {};
+    if (!S.dinfo.meta) S.dinfo.meta = {};
+    S.base.forEach((it) => {
+      const f = it.file, m = f && f.remote && S.dinfo.meta[f.id];
+      if (m && m.mod === f.lastModified && (it.kind === 'audio' || it.kind === 'video') && m.dur > 0) {
+        it.dur = m.dur; if (m.vw) { it.vw = m.vw; it.vh = m.vh; } if (m.thumb) it.thumb = m.thumb; it.metaState = 2;
+      }
+    });
+  }
   S.vault = true;
   $('#folderName').textContent = name;
   S.base.forEach((it) => { if (it.kind === 'audio' || it.kind === 'video') queueMeta(it); });
@@ -715,13 +735,13 @@ function runSwap() {
   stagger(home ? home.children : list.children);
   list.classList.remove('swap'); void list.offsetWidth; list.classList.add('swap');
   clearTimeout(runSwap.t);
-  runSwap.t = setTimeout(() => list.classList.remove('swap'), 1200);
+  runSwap.t = setTimeout(() => list.classList.remove('swap'), 800);
 }
 
 async function refresh() {
   if (!S.vault) return;
   if (S.source === 'drive' && S.drive) {
-    try { await openDrive(S.drive.id, true); toast('File list refreshed'); } catch (e) { /* already reported */ }
+    try { await openDrive(S.drive.id, true, false, true); toast('File list refreshed'); } catch (e) { /* already reported */ }
     return;
   }
   if (S.handle) {
@@ -745,6 +765,16 @@ function queueMeta(it) {
   loadQ.push(it);
   pumpMeta();
 }
+/* ---- on-device cache for Drive: durations, video stills, tags ---- */
+function dinfoSave() {
+  clearTimeout(dinfoSave.t);
+  dinfoSave.t = setTimeout(() => { if (S.dinfo && S.source === 'drive') idb.set('dinfo:' + S.metaKey, S.dinfo); }, 1500);
+}
+function cacheMeta(it) {
+  if (!S.dinfo || !it.file || !it.file.remote) return;
+  S.dinfo.meta[it.file.id] = { mod: it.file.lastModified, dur: it.dur, vw: it.vw || 0, vh: it.vh || 0, thumb: it.thumb || '' };
+  dinfoSave();
+}
 function pumpMeta() {
   while (loading < 4 && loadQ.length) {
     const it = loadQ.shift();
@@ -756,7 +786,7 @@ function pumpMeta() {
     const done = (ok) => {
       if (finished) return;
       finished = true;
-      if (ok) { it.dur = el.duration; if (it.kind === 'video') { it.vw = el.videoWidth; it.vh = el.videoHeight; } it.metaState = 2; }
+      if (ok) { it.dur = el.duration; if (it.kind === 'video') { it.vw = el.videoWidth; it.vh = el.videoHeight; } it.metaState = 2; cacheMeta(it); }
       else it.metaState = 3;
       freeUrl(url);
       el.removeAttribute('src');
@@ -903,7 +933,7 @@ function scheduleHome() {
 function homeHtml() {
   const items = S.items.filter((i) => !i.hidden);
   const albums = S.albums.slice().sort((x, y) => dateTs(getDate(x)) - dateTs(getDate(y)) || natural.compare(x.title, y.title));
-  const coverOf = (al) => (al.cover ? `<img alt="" src="${coverUrl(al.cover)}">` : '<i class="fa-solid fa-compact-disc"></i>');
+  const coverOf = (al) => (al.cover ? `<img alt="" decoding="sync" src="${coverUrl(al.cover)}">` : '<i class="fa-solid fa-compact-disc"></i>');
   const grid = albums.slice(-12).map((al) => `<button class="alb" data-open="${al.uid}"><span class="cv">${coverOf(al)}</span><b>${esc(al.title)}</b><small>${esc(monthYear(getDate(al)))}</small></button>`).join('');
   const recent = items.filter((i) => !(i.kind === 'audio' && i.section === 'disc')).sort((x, y) => y.modified - x.modified).slice(0, 40);
   const KIND_LABEL = { lyrics: 'Lyrics', demo: 'Demo', disc: 'Track', docs: 'Document', n_docs: 'Document', video: 'Video', n_video: 'Video', lyricvideo: 'Lyric Video', n_notes: 'Note', n_bib: 'Novel' };
@@ -960,19 +990,23 @@ if (window.ResizeObserver) new ResizeObserver(() => fitRecent()).observe($('#lis
 function renderList() {
   const el = $('#list');
   const st = el.scrollTop;
-  if (!S.vault) { el.innerHTML = welcomeHtml(); $('#count').textContent = ''; return; }
+  if (!S.vault) { el._home = null; el.innerHTML = welcomeHtml(); $('#count').textContent = ''; return; }
   const totalFiles = S.items.filter((i) => !i.hidden).length;
   const searching = !!S.query.trim();
   el.classList.toggle('is-home', S.section === 'home' && !searching);
   if (S.section === 'home' && !searching) {
     $('#count').textContent = '';
-    el.innerHTML = homeHtml();
+    const hh = homeHtml();
+    if (el._home === hh && el.querySelector(':scope > .home')) { refreshRowStates(); markSelectedRow(); return; } /* nothing changed: no redraw, no flicker */
+    el._home = hh;
+    el.innerHTML = hh;
     fitRecent();
     el.scrollTop = st;
     refreshRowStates();
     markSelectedRow();
     return;
   }
+  el._home = null;
   const L = layout();
   const flat = visible();
   $('#count').textContent = flat.length + '/' + totalFiles;
@@ -1143,7 +1177,7 @@ function renderPlayer() {
   $('#psub').textContent = it.album ? it.album.title : kindLabel(it);
   const cov = $('#pcover');
   const cover = it.album && it.album.cover;
-  if (cover) cov.innerHTML = `<img alt="" src="${coverUrl(cover)}">`;
+  if (cover) cov.innerHTML = `<img alt="" decoding="sync" src="${coverUrl(cover)}">`;
   else cov.innerHTML = `<i class="fa-solid ${it.album ? 'fa-compact-disc' : iconOf(it)}"></i>`;
   updateTimeUI();
   const vol = $('#pvol'); vol.value = S.vol; setFill(vol);
@@ -1369,7 +1403,14 @@ async function preloadCovers() {
   const worker = async () => {
     while (idx < list.length) {
       const c = list[idx++];
-      try { c.url = URL.createObjectURL(new Blob([await c.file.arrayBuffer()], { type: c.file.type || 'image/jpeg' })); } catch (e) { /* falls back to the streamed link */ }
+      const k = 'dcov:' + S.metaKey + ':' + c.file.id;
+      try {
+        const rec = await idb.get(k);
+        if (rec && rec.blob && rec.mod === c.file.lastModified) { c.url = URL.createObjectURL(rec.blob); continue; }
+        const blob = new Blob([await c.file.arrayBuffer()], { type: c.file.type || 'image/jpeg' });
+        c.url = URL.createObjectURL(blob);
+        idb.set(k, { mod: c.file.lastModified, blob });
+      } catch (e) { /* falls back to the streamed link */ }
     }
   };
   await Promise.all(Array.from({ length: 8 }, worker));
@@ -1443,7 +1484,7 @@ function mediaHtml(it) {
   }
   if (it.kind === 'album') {
     const cover = it.cover
-      ? `<img alt="" src="${coverUrl(it.cover)}">`
+      ? `<img alt="" decoding="sync" src="${coverUrl(it.cover)}">`
       : '<svg viewBox="0 0 200 200" fill="none" stroke="currentColor" stroke-width="0.8" aria-hidden="true" style="color:var(--muted)"><circle cx="100" cy="100" r="92"/><circle cx="100" cy="100" r="76"/><circle cx="100" cy="100" r="60"/><circle cx="100" cy="100" r="44"/><circle cx="100" cy="100" r="12"/></svg>';
     const tracks = it.tracks.map((t, i) => `<button class="track" data-act="play-track" data-uid="${t.uid}" aria-label="Play ${esc(t.title)}"><span class="n"><span class="num">${String(i + 1).padStart(2, '0')}</span><i class="fa-solid fa-play tp"></i></span><span class="tn">${esc(t.title)}</span><span class="td" data-tdur="${t.uid}">${esc(durText(t))}</span></button>`).join('');
     return `<div class="cover">${cover}</div>
@@ -1890,7 +1931,7 @@ function pushToken() {
 async function onSwMsg(e) {
   const d = e.data || {};
   if (d.type !== 'need-token' || !e.ports[0]) return;
-  try { if (d.force || !gdValid()) await gdToken(false); } catch (err) { /* reply with what we have */ }
+  try { if (d.force || !gdValid()) await gdToken(false); } catch (err) { toast('Google session expired. Press Refresh to sign in again.'); }
   e.ports[0].postMessage({ token: GD.token, exp: GD.exp, api: GD_API });
 }
 let swReady = null;
@@ -1992,12 +2033,13 @@ class DriveFile {
 }
 DriveFile.prototype.remote = true;
 
-async function gdList(id) {
+/* lists the children of several folders in one request (much faster than one request per folder) */
+async function gdListMany(ids) {
   const out = [];
   let page = '';
+  const q = encodeURIComponent('(' + ids.map((i) => "'" + i + "' in parents").join(' or ') + ') and trashed=false');
+  const fields = encodeURIComponent('nextPageToken,files(id,name,mimeType,size,modifiedTime,parents,shortcutDetails)');
   do {
-    const q = encodeURIComponent("'" + id + "' in parents and trashed=false");
-    const fields = encodeURIComponent('nextPageToken,files(id,name,mimeType,size,modifiedTime,shortcutDetails)');
     const url = GD_API + '/drive/v3/files?q=' + q + '&fields=' + fields + '&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true' + (page ? '&pageToken=' + encodeURIComponent(page) : '');
     const j = await (await gdFetch(url)).json();
     out.push(...(j.files || []));
@@ -2007,54 +2049,83 @@ async function gdList(id) {
 }
 async function gdWalk(rootId, onCount) {
   const entries = [];
-  const queue = [{ id: rootId, prefix: '' }];
-  let active = 0, failed = false;
-  await new Promise((resolve, reject) => {
-    const pump = () => {
-      if (failed) return;
-      while (active < 6 && queue.length) {
-        const f = queue.shift();
-        active++;
-        gdList(f.id).then((items) => {
-          for (const m of items) {
-            if (m.name.startsWith('.') || SKIP_DIRS.has(m.name)) continue;
-            let mm = m;
-            if (m.mimeType === GD_SHORT && m.shortcutDetails) mm = Object.assign({}, m, { id: m.shortcutDetails.targetId, mimeType: m.shortcutDetails.targetMimeType || '' });
-            if (mm.mimeType === GD_FOLDER) { queue.push({ id: mm.id, prefix: f.prefix + m.name + '/' }); continue; }
-            let name = m.name;
-            if (mm.mimeType === GD_DOC) { if (!TEXT.has(extOf(name))) name += '.txt'; }
-            else if ((mm.mimeType || '').startsWith('application/vnd.google-apps.')) continue; /* sheets, slides… */
-            entries.push({ path: f.prefix + name, name, file: new DriveFile(Object.assign({}, mm, { name })) });
+  const prefix = new Map([[rootId, '']]);
+  let level = [rootId];
+  const seen = new Set([rootId]);
+  while (level.length) {
+    const chunks = [];
+    for (let i = 0; i < level.length; i += 25) chunks.push(level.slice(i, i + 25));
+    const next = [];
+    let ci = 0;
+    const worker = async () => {
+      while (ci < chunks.length) {
+        const items = await gdListMany(chunks[ci++]);
+        for (const m of items) {
+          if (m.name.startsWith('.') || SKIP_DIRS.has(m.name)) continue;
+          const par = (m.parents || []).find((p) => prefix.has(p));
+          if (par === undefined) continue;
+          const pre = prefix.get(par);
+          let mm = m;
+          if (m.mimeType === GD_SHORT && m.shortcutDetails) mm = Object.assign({}, m, { id: m.shortcutDetails.targetId, mimeType: m.shortcutDetails.targetMimeType || '' });
+          if (mm.mimeType === GD_FOLDER) {
+            if (!seen.has(mm.id)) { seen.add(mm.id); prefix.set(mm.id, pre + m.name + '/'); next.push(mm.id); }
+            continue;
           }
-          onCount(entries.length);
-        }).catch((e) => { failed = true; reject(e); }).finally(() => {
-          active--;
-          if (!failed) { if (!queue.length && !active) resolve(); else pump(); }
-        });
+          let name = m.name;
+          if (mm.mimeType === GD_DOC) { if (!TEXT.has(extOf(name))) name += '.txt'; }
+          else if ((mm.mimeType || '').startsWith('application/vnd.google-apps.')) continue; /* sheets, slides… */
+          entries.push({ path: pre + name, name, file: new DriveFile(Object.assign({}, mm, { name })) });
+        }
+        onCount(entries.length);
       }
     };
-    pump();
-  });
+    await Promise.all(Array.from({ length: 6 }, worker));
+    level = next;
+  }
   return entries;
 }
+const gdSig = (entries) => entries.map((e) => e.path + '|' + e.file.id + '|' + e.file.lastModified + '|' + e.file.size).sort().join('\n');
+const gdPack = (entries) => entries.map((e) => ({ path: e.path, name: e.name, m: { id: e.file.id, name: e.name, mimeType: e.file.mime, size: String(e.file.size), modifiedTime: new Date(e.file.lastModified).toISOString() } }));
 function gdFolderId(s) {
   s = String(s || '').trim();
   const m = s.match(/\/folders\/([\w-]{10,})/) || s.match(/[?&]id=([\w-]{10,})/);
   if (m) return m[1];
   return /^[\w-]{10,}$/.test(s) ? s : '';
 }
-async function openDrive(id, interactive, quiet) {
-  setScanning(true, 'Connecting to Google Drive…');
+/* After an instant open from the cache, quietly check Drive and redraw only if something changed */
+async function refreshDriveInBackground(id, cached) {
   try {
+    if (!gdValid()) await gdToken(false);
+    pushToken();
+    const entries = await gdWalk(id, () => {});
+    if (S.source !== 'drive' || !S.drive || S.drive.id !== id) return;
+    if (gdSig(entries) === cached.sig) return;
+    await idb.set('dlist:' + id, { name: cached.name, sig: gdSig(entries), entries: gdPack(entries) });
+    await loadVault(entries, cached.name, 'g:' + id);
+  } catch (e) { /* offline or signed out: the cached view stays */ }
+}
+async function openDrive(id, interactive, quiet, fresh) {
+  setScanning(true);
+  try {
+    const cached = fresh ? null : await idb.get('dlist:' + id);
+    if (cached && cached.entries && cached.entries.length) {
+      await ensureSW();
+      S.handle = null; S.source = 'drive'; S.drive = { id, name: cached.name };
+      lsSet('console-source', JSON.stringify({ type: 'drive', id, name: cached.name }));
+      const entries = cached.entries.map((e) => ({ path: e.path, name: e.name, file: new DriveFile(e.m) }));
+      await loadVault(entries, cached.name, 'g:' + id);
+      refreshDriveInBackground(id, cached);
+      return;
+    }
     if (!gdValid()) await gdToken(interactive);
     await ensureSW();
     pushToken();
-    setScanning(true, 'Reading Google Drive…');
     const meta = await (await gdFetch(GD_API + '/drive/v3/files/' + id + '?fields=name,mimeType&supportsAllDrives=true')).json();
     if (meta.mimeType !== GD_FOLDER) throw new Error('That link is not a folder');
-    const entries = await gdWalk(id, (n) => setScanning(true, 'Reading Google Drive… ' + n));
+    const entries = await gdWalk(id, () => {});
     S.handle = null; S.source = 'drive'; S.drive = { id, name: meta.name };
     lsSet('console-source', JSON.stringify({ type: 'drive', id, name: meta.name }));
+    idb.set('dlist:' + id, { name: meta.name, sig: gdSig(entries), entries: gdPack(entries) });
     await loadVault(entries, meta.name, 'g:' + id);
   } catch (e) {
     console.error(e);
