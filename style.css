@@ -465,3 +465,9 @@ input[type=range]::-moz-range-track{background:transparent}
 .intro .list>:not(.home),.intro .list>.home>*{animation:rise .55s ease backwards;animation-delay:calc(.25s + var(--i,0)*.035s)}
 .list.swap>:not(.home),.list.swap>.home>*{animation:rise .4s ease backwards;animation-delay:calc(var(--i,0)*.03s)}
 @media (prefers-reduced-motion:reduce){.intro *,.list.swap *{animation:none!important}}
+
+/* round 3: title joins the intro; slower, even wave for long lists */
+.intro .head{animation:rise .55s ease backwards;animation-delay:.2s}
+.intro .list>:not(.home),.intro .list>.home>*{animation-delay:calc(.28s + var(--i,0)*.045s)}
+.list.swap>:not(.home),.list.swap>.home>*{animation:rise .5s ease backwards;animation-delay:calc(var(--i,0)*.045s)}
+@media (prefers-reduced-motion:reduce){.intro .head{animation:none!important}}

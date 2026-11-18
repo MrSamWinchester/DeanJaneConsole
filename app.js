@@ -121,7 +121,11 @@ const SECTIONS = [
 ];
 const SEC = Object.fromEntries(SECTIONS.map((s) => [s.id, s]));
 const GROUPED = new Set(['demo', 'lyrics', 'video', 'lyricvideo']); /* lists split by album folder */
-const WIDE_SECS = new Set(['docs', 'n_docs', 'n_notes', 'n_bib']); /* these readers get a fixed 914px panel */
+const WIDE_SECS = new Set(['docs', 'n_docs', 'n_notes', 'n_bib']); /* these readers get a fixed-width panel */
+/* ===== Details panel widths in px (desktop) — change the numbers here =====
+   Everything else (Home, Demos, Discography, Videos...) uses the default 410px,
+   which lives in style.css in the .app rule: var(--detail-w,410px). */
+const DETAIL_W = { lyrics: 499, docs: 929, n_docs: 929, n_notes: 914, n_bib: 939 };
 
 /* folder-name rules (Russian and English names both work) */
 const SEP = '(^|[^a-zа-яё0-9])';
@@ -669,12 +673,14 @@ async function loadVault(entries, name, key) {
   }
   S.selected = (prevSelected && S.byPath.get(prevSelected)) || null; /* a fresh start shows an empty details panel */
   S.vault = true;
-  setScanning(false);
   $('#folderName').textContent = name;
-  renderAll();
   S.base.forEach((it) => { if (it.kind === 'audio' || it.kind === 'video') queueMeta(it); });
+  /* keep the preloader until covers and tags are in, so the page doesn't redraw after it opens */
+  const ready = (async () => { await preloadCovers(); await loadAllTags(); })().catch(() => {});
+  await Promise.race([ready, new Promise((r) => setTimeout(r, 30000))]);
+  renderAll();
+  setScanning(false);
   loadAllText();
-  loadAllTags();
 }
 
 function setScanning(on) {
@@ -1348,6 +1354,20 @@ async function fillReader(it) {
 
 /* ================= detail panel ================= */
 const coverUrl = (img) => (img.url = img.url || fileUrl(img.file));
+/* Drive covers are downloaded once and kept as blobs, so they never reload when you switch pages */
+async function preloadCovers() {
+  const covers = new Set();
+  S.albums.forEach((i) => { if (i.cover) covers.add(i.cover); });
+  const list = [...covers].filter((c) => c.file && c.file.remote && !c.url);
+  let idx = 0;
+  const worker = async () => {
+    while (idx < list.length) {
+      const c = list[idx++];
+      try { c.url = URL.createObjectURL(new Blob([await c.file.arrayBuffer()], { type: c.file.type || 'image/jpeg' })); } catch (e) { /* falls back to the streamed link */ }
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker(), worker(), worker()]);
+}
 
 function factsFor(it) {
   const f = [];
@@ -1532,8 +1552,8 @@ function applyDetailWidth() {
   const it = S.selected;
   const home = S.section === 'home' && !S.query.trim();
   const wide = !home && !!it && it.kind === 'text' && WIDE_SECS.has(it.section) && window.innerWidth > 1000;
-  if (wide) app.style.setProperty('--detail-w', it.section === 'n_bib' ? 'min(924px, calc(100vw - 600px))' : 'min(914px, calc(100vw - 600px))');
-  else if (S.section === 'lyrics' && window.innerWidth > 1000) app.style.setProperty('--detail-w', '489px');
+  if (wide) app.style.setProperty('--detail-w', 'min(' + (DETAIL_W[it.section] || 914) + 'px, calc(100vw - 600px))');
+  else if (S.section === 'lyrics' && window.innerWidth > 1000) app.style.setProperty('--detail-w', DETAIL_W.lyrics + 'px');
   else app.style.removeProperty('--detail-w');
 }
 
