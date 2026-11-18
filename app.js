@@ -717,7 +717,6 @@ function pumpMeta() {
     const el = document.createElement(it.kind === 'video' ? 'video' : 'audio');
     el.preload = it.kind === 'video' ? 'auto' : 'metadata';
     const url = fileUrl(it.file);
-    if (it.file.url) el.crossOrigin = 'anonymous'; /* lets the video still be copied to a canvas */
     let finished = false;
     const done = (ok) => {
       if (finished) return;
@@ -758,7 +757,6 @@ function pumpMeta() {
       done(true);
     };
     el.onerror = () => {
-      if (it.file.url && el.crossOrigin && !finished && !el._noCors) { el._noCors = 1; el.removeAttribute('crossorigin'); el.src = url; return; } /* no CORS: still get the duration */
       done(false);
     };
     setTimeout(() => done(false), it.kind === 'video' ? 20000 : 10000);
@@ -848,7 +846,7 @@ function rowHtml(it) {
   const bpm = it.kind === 'audio' ? bpmOf(it) : '';
   if (bpm) sub += ' · ' + bpm + ' BPM';
   const cov = it.kind === 'album' && it.cover ? coverUrl(it.cover) : (it.thumb || '');
-  const right = it.kind === 'album' ? it.tracks.length + ' Tracks' : durText(it);
+  const right = it.kind === 'album' ? it.tracks.length + ' Songs' : durText(it);
   return `<div class="row" data-uid="${it.uid}">
     <div class="lead ${cov ? 'cv' : ''}">
       ${cov ? `<img class="lead-cover" alt="" src="${cov}">` : `<span class="ico ${playable ? 'has' : ''}"><i class="fa-solid ${iconOf(it)}"></i></span>`}
@@ -1575,6 +1573,10 @@ async function copyText(t) {
 
 function openFile(it) {
   const viewable = ['audio', 'video', 'text', 'pdf'].includes(it.kind);
+  if (it.file.isDoc) {
+    it.file.text().then((t) => { const u = URL.createObjectURL(new Blob([t], { type: 'text/plain' })); window.open(u, '_blank', 'noopener'); setTimeout(() => URL.revokeObjectURL(u), 60000); }).catch(() => toast('Could not open the document'));
+    return;
+  }
   if (it.file.url) {
     const u = it.file.url();
     if (viewable) window.open(u, '_blank', 'noopener');
@@ -1819,6 +1821,7 @@ document.addEventListener('drop', async (e) => {
 
 
 /* ================= Google Drive ================= */
+const GD_API = lsGet('console-gapi', 'https://www.googleapis.com');
 const GD_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
 const GD_FOLDER = 'application/vnd.google-apps.folder';
 const GD_SHORT = 'application/vnd.google-apps.shortcut';
@@ -1827,6 +1830,38 @@ const GD = { token: null, exp: 0, pending: null, timer: null };
 try { const t = JSON.parse(sessionStorage.getItem('console-gtoken') || 'null'); if (t && t.exp > Date.now()) { GD.token = t.token; GD.exp = t.exp; } } catch (e) { /* no saved token */ }
 const gdClientId = () => lsGet('console-gclient', '');
 const gdValid = () => !!GD.token && Date.now() < GD.exp;
+
+/* ---- service worker that streams Drive files ---- */
+function pushToken() {
+  try {
+    const c = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (c && GD.token) c.postMessage({ type: 'token', token: GD.token, exp: GD.exp, api: GD_API });
+  } catch (e) { /* ignore */ }
+}
+async function onSwMsg(e) {
+  const d = e.data || {};
+  if (d.type !== 'need-token' || !e.ports[0]) return;
+  try { if (d.force || !gdValid()) await gdToken(false); } catch (err) { /* reply with what we have */ }
+  e.ports[0].postMessage({ token: GD.token, exp: GD.exp, api: GD_API });
+}
+let swReady = null;
+function ensureSW() {
+  const okHost = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  if (!('serviceWorker' in navigator) || !okHost) return Promise.reject(new Error('Google Drive needs https or localhost (not a file:// page)'));
+  if (swReady) return swReady;
+  swReady = (async () => {
+    navigator.serviceWorker.addEventListener('message', onSwMsg);
+    await navigator.serviceWorker.register('sw.js');
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller) {
+      await new Promise((res) => { navigator.serviceWorker.addEventListener('controllerchange', res, { once: true }); setTimeout(res, 3000); });
+    }
+    if (!navigator.serviceWorker.controller) throw new Error('Reload the page once (press F5) and try again');
+    pushToken();
+  })();
+  swReady.catch(() => { swReady = null; });
+  return swReady;
+}
 
 function loadGIS() {
   return new Promise((res, rej) => {
@@ -1858,7 +1893,7 @@ function gdToken(interactive) {
             GD.token = r.access_token;
             GD.exp = Date.now() + Math.max(60, (r.expires_in || 3600) - 90) * 1000;
             try { sessionStorage.setItem('console-gtoken', JSON.stringify({ token: GD.token, exp: GD.exp })); } catch (e) { /* ignore */ }
-            S.base.forEach((i) => { if (i.kind === 'image') i.url = null; }); /* cover links carry the token */
+            pushToken();
             gdSchedule();
             resolve(GD.token);
           } else reject(new Error((r && (r.error_description || r.error)) || 'Sign-in failed'));
@@ -1892,8 +1927,9 @@ class DriveFile {
     this.lastModified = Date.parse(m.modifiedTime) || 0;
     this.type = this.isDoc ? 'text/plain' : this.mime;
   }
-  get base() { return 'https://www.googleapis.com/drive/v3/files/' + this.id; }
-  url() { return (this.isDoc ? this.base + '/export?mimeType=text%2Fplain' : this.base + '?alt=media&supportsAllDrives=true') + (this.isDoc ? '&' : '&') + 'access_token=' + encodeURIComponent(GD.token || ''); }
+  get base() { return GD_API + '/drive/v3/files/' + this.id; }
+  /* same-origin address served by sw.js, which adds the sign-in and supports seeking */
+  url() { return new URL('drive-file/' + this.id + '?s=' + this.size + '&t=' + encodeURIComponent(this.mime || 'application/octet-stream'), document.baseURI).href; }
   async _get(range) {
     const u = this.isDoc ? this.base + '/export?mimeType=text%2Fplain' : this.base + '?alt=media&supportsAllDrives=true';
     return gdFetch(u, range ? { headers: { Range: range } } : {});
@@ -1913,7 +1949,7 @@ async function gdList(id) {
   do {
     const q = encodeURIComponent("'" + id + "' in parents and trashed=false");
     const fields = encodeURIComponent('nextPageToken,files(id,name,mimeType,size,modifiedTime,shortcutDetails)');
-    const url = 'https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=' + fields + '&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true' + (page ? '&pageToken=' + encodeURIComponent(page) : '');
+    const url = GD_API + '/drive/v3/files?q=' + q + '&fields=' + fields + '&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true' + (page ? '&pageToken=' + encodeURIComponent(page) : '');
     const j = await (await gdFetch(url)).json();
     out.push(...(j.files || []));
     page = j.nextPageToken || '';
@@ -1962,8 +1998,10 @@ async function openDrive(id, interactive, quiet) {
   setScanning(true, 'Connecting to Google Drive…');
   try {
     if (!gdValid()) await gdToken(interactive);
+    await ensureSW();
+    pushToken();
     setScanning(true, 'Reading Google Drive…');
-    const meta = await (await gdFetch('https://www.googleapis.com/drive/v3/files/' + id + '?fields=name,mimeType&supportsAllDrives=true')).json();
+    const meta = await (await gdFetch(GD_API + '/drive/v3/files/' + id + '?fields=name,mimeType&supportsAllDrives=true')).json();
     if (meta.mimeType !== GD_FOLDER) throw new Error('That link is not a folder');
     const entries = await gdWalk(id, (n) => setScanning(true, 'Reading Google Drive… ' + n));
     S.handle = null; S.source = 'drive'; S.drive = { id, name: meta.name };
