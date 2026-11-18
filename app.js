@@ -678,9 +678,32 @@ async function loadVault(entries, name, key) {
 }
 
 function setScanning(on) {
+  const was = S.scanning;
   S.scanning = on;
   const l = $('#loader');
   if (l) l.classList.toggle('on', !!on);
+  if (!on && (was || !S.introShown)) { S.introShown = true; requestAnimationFrame(runIntro); }
+}
+/* gentle top-to-bottom fade-in: everything on entering the site, only the list area when switching sections */
+function stagger(nodes) { [...nodes].forEach((n, i) => n.style.setProperty('--i', Math.min(i, 14))); }
+function runIntro() {
+  const app = $('#app');
+  if (!app) return;
+  stagger($('#nav').children);
+  const list = $('#list');
+  stagger(list.querySelector(':scope > .home') ? list.querySelector(':scope > .home').children : list.children);
+  app.classList.remove('intro'); void app.offsetWidth; app.classList.add('intro');
+  clearTimeout(runIntro.t);
+  runIntro.t = setTimeout(() => app.classList.remove('intro'), 1800);
+}
+function runSwap() {
+  const list = $('#list');
+  if (!list) return;
+  const home = list.querySelector(':scope > .home');
+  stagger(home ? home.children : list.children);
+  list.classList.remove('swap'); void list.offsetWidth; list.classList.add('swap');
+  clearTimeout(runSwap.t);
+  runSwap.t = setTimeout(() => list.classList.remove('swap'), 1200);
 }
 
 async function refresh() {
@@ -871,7 +894,7 @@ function homeHtml() {
   const coverOf = (al) => (al.cover ? `<img alt="" src="${coverUrl(al.cover)}">` : '<i class="fa-solid fa-compact-disc"></i>');
   const grid = albums.slice(-12).map((al) => `<button class="alb" data-open="${al.uid}"><span class="cv">${coverOf(al)}</span><b>${esc(al.title)}</b><small>${esc(monthYear(getDate(al)))}</small></button>`).join('');
   const recent = items.filter((i) => !(i.kind === 'audio' && i.section === 'disc')).sort((x, y) => y.modified - x.modified).slice(0, 40);
-  const KIND_LABEL = { lyrics: 'Lyrics', demo: 'Demo', disc: 'Track', docs: 'Document', n_docs: 'Document', video: 'Video', n_video: 'Video', lyricvideo: 'Lyric Video', n_notes: 'Note', n_bib: 'Bibliography' };
+  const KIND_LABEL = { lyrics: 'Lyrics', demo: 'Demo', disc: 'Track', docs: 'Document', n_docs: 'Document', video: 'Video', n_video: 'Video', lyricvideo: 'Lyric Video', n_notes: 'Note', n_bib: 'Novel' };
   const row = (it) => {
     const alb = it.kind === 'album';
     const sub = alb ? 'Album' : (KIND_LABEL[it.section] || 'File');
@@ -995,6 +1018,7 @@ function go(sec, keepQuery) {
   if (!keepQuery) { S.query = ''; $('#search').value = ''; }
   renderNav(); renderHead(); renderList();
   $('#list').scrollTop = 0;
+  runSwap();
 }
 
 /* ================= selection ================= */
@@ -1357,7 +1381,6 @@ function factsFor(it) {
     dateFact();
   }
   let html = f.map((x) => `<div class="fact"><span>${x.k}</span><b ${x.bind ? `data-bind="${x.bind}"` : ''} ${x.edit ? 'data-edit="date"' : ''}>${esc(x.v)}</b></div>`).join('');
-  if (f.length % 2) html += '<div class="fact"></div>';
   return html;
 }
 function refreshFacts() {
@@ -1509,8 +1532,8 @@ function applyDetailWidth() {
   const it = S.selected;
   const home = S.section === 'home' && !S.query.trim();
   const wide = !home && !!it && it.kind === 'text' && WIDE_SECS.has(it.section) && window.innerWidth > 1000;
-  if (wide) app.style.setProperty('--detail-w', 'min(914px, calc(100vw - 600px))');
-  else if (S.section === 'lyrics' && window.innerWidth > 1000) app.style.setProperty('--detail-w', '479px');
+  if (wide) app.style.setProperty('--detail-w', it.section === 'n_bib' ? 'min(924px, calc(100vw - 600px))' : 'min(914px, calc(100vw - 600px))');
+  else if (S.section === 'lyrics' && window.innerWidth > 1000) app.style.setProperty('--detail-w', '489px');
   else app.style.removeProperty('--detail-w');
 }
 

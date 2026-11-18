@@ -195,7 +195,7 @@ input[type=range]::-moz-range-track{background:transparent}
 .d-head .iconbtn.on{color:var(--text)}
 .detail>*{flex-shrink:0}
 .drawer-close{display:none}
-.drawer-close i{font-size:20px;position:relative;top:1.5px}
+.drawer-close i{font-size:20px;position:relative;top:0}
 .card{border:1px solid var(--line);border-radius:16px;background:var(--panel)}
 .wave-card{padding:18px 20px;display:flex;flex-direction:column;gap:14px}
 .wave{width:100%;height:96px;display:block;cursor:pointer}
@@ -443,3 +443,25 @@ input[type=range]::-moz-range-track{background:transparent}
 .brand-t{display:inline-block;text-align:center;line-height:1.2}
 .brand-t b,.brand-t span{display:block}
 .brand i{font-size:24px}
+
+/* Console in the logo: same colour as Dean Jane */
+.brand-t span{color:var(--text)}
+
+/* facts: one per row, label left, value right */
+.facts{grid-template-columns:1fr}
+.fact{flex-direction:row;align-items:center;justify-content:space-between;gap:16px}
+.fact b{text-align:right;min-width:0}
+.fact input{text-align:right}
+
+/* fade-in animations */
+@keyframes rise{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
+.intro .brand,.intro .top,.intro .detail>*,.intro .player,.intro .side-foot{animation:rise .55s ease backwards}
+.intro .brand{animation-delay:.1s}
+.intro .top{animation-delay:.15s}
+.intro .detail>*{animation-delay:.3s}
+.intro .player{animation-delay:.5s}
+.intro .side-foot{animation-delay:.45s}
+.intro #nav>*{animation:rise .5s ease backwards;animation-delay:calc(.18s + var(--i,0)*.03s)}
+.intro .list>:not(.home),.intro .list>.home>*{animation:rise .55s ease backwards;animation-delay:calc(.25s + var(--i,0)*.035s)}
+.list.swap>:not(.home),.list.swap>.home>*{animation:rise .4s ease backwards;animation-delay:calc(var(--i,0)*.03s)}
+@media (prefers-reduced-motion:reduce){.intro *,.list.swap *{animation:none!important}}
