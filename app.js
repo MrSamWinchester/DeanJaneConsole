@@ -482,9 +482,10 @@ async function loadAllTags() {
   if (!list.length) return;
   let idx = 0;
   const worker = async () => { while (idx < list.length && run === tagRun) { const it = list[idx++]; it.tag = await readTags(it); } };
-  await Promise.all([worker(), worker(), worker()]);
+  await Promise.all(Array.from({ length: S.drive ? 10 : 3 }, worker));
   if (run !== tagRun) return;
   applyOrdering();
+  if (S.scanning) return; /* the preloader is still up: the final redraw happens when it closes */
   renderList();
   if (S.selected && (S.selected.kind === 'album' || GROUPED.has(S.selected.section))) refreshFacts();
   if (S.selected && S.selected.kind === 'album') renderDetail();
@@ -676,8 +677,8 @@ async function loadVault(entries, name, key) {
   $('#folderName').textContent = name;
   S.base.forEach((it) => { if (it.kind === 'audio' || it.kind === 'video') queueMeta(it); });
   /* keep the preloader until covers and tags are in, so the page doesn't redraw after it opens */
-  const ready = (async () => { await preloadCovers(); await loadAllTags(); })().catch(() => {});
-  await Promise.race([ready, new Promise((r) => setTimeout(r, 30000))]);
+  const ready = Promise.all([preloadCovers(), loadAllTags()]).catch(() => {});
+  await Promise.race([ready, new Promise((r) => setTimeout(r, 12000))]);
   renderAll();
   setScanning(false);
   loadAllText();
@@ -691,7 +692,12 @@ function setScanning(on) {
   if (!on && (was || !S.introShown)) { S.introShown = true; requestAnimationFrame(runIntro); }
 }
 /* gentle top-to-bottom fade-in: everything on entering the site, only the list area when switching sections */
-function stagger(nodes) { [...nodes].forEach((n, i) => n.style.setProperty('--i', Math.min(i, 14))); }
+/* the whole list fades in as one smooth sweep: total spread ~0.22s however many rows there are */
+function stagger(nodes) {
+  const arr = [...nodes];
+  const cap = Math.max(1, Math.min(arr.length - 1, 14));
+  arr.forEach((n, i) => n.style.setProperty('--d', (Math.min(i, cap) / cap * 0.22).toFixed(3) + 's'));
+}
 function runIntro() {
   const app = $('#app');
   if (!app) return;
@@ -1366,7 +1372,7 @@ async function preloadCovers() {
       try { c.url = URL.createObjectURL(new Blob([await c.file.arrayBuffer()], { type: c.file.type || 'image/jpeg' })); } catch (e) { /* falls back to the streamed link */ }
     }
   };
-  await Promise.all([worker(), worker(), worker(), worker(), worker(), worker()]);
+  await Promise.all(Array.from({ length: 8 }, worker));
 }
 
 function factsFor(it) {
@@ -2073,10 +2079,11 @@ function openSourceDialog() {
       <button class="ghost ${S.source === 'drive' ? 'on' : ''}" data-d="drive"><i class="fa-brands fa-google-drive"></i>Google Drive</button>
     </div>
     <div class="dlg-drive" id="dgForm" ${S.source === 'drive' || gdClientId() ? '' : 'hidden'}>
-      <label>Folder link<input id="dgLink" type="text" placeholder="https://drive.google.com/drive/folders/…" value="${esc(link)}" autocomplete="off"></label>
-      <label>OAuth Client ID<input id="dgClient" type="text" placeholder="123456789-abc.apps.googleusercontent.com" value="${esc(gdClientId())}" autocomplete="off"></label>
+      <label>Folder link<input id="dgLink" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://drive.google.com/drive/folders/…" value="${esc(link)}" autocomplete="off"></label>
+      <label>OAuth Client ID<input id="dgClient" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="123456789-abc.apps.googleusercontent.com" value="${esc(gdClientId())}" autocomplete="off"></label>
       <p>The console only reads your files (read-only access). The setup steps are in README.txt.</p>
       <button class="primary" data-d="connect"><i class="fa-brands fa-google-drive"></i>Connect</button>
+      <button class="ghost" data-d="share"><i class="fa-solid fa-link"></i>Copy setup link for another device</button>
     </div>
   </div>`;
   document.body.appendChild(d);
@@ -2088,8 +2095,15 @@ function openSourceDialog() {
     if (act === 'close') closeDialog();
     else if (act === 'local') { closeDialog(); pickLocal(); }
     else if (act === 'drive') { $('#dgForm').hidden = false; loadGIS().catch(() => {}); $('#dgLink').focus(); }
+    else if (act === 'share') {
+      const cid = $('#dgClient').value.trim().replace(/\s+/g, '');
+      const id = gdFolderId($('#dgLink').value);
+      if (!cid || !id) { toast('Fill in the folder link and Client ID first'); return; }
+      const url = location.origin + location.pathname + '#setup=' + btoa(JSON.stringify({ c: cid, f: id }));
+      (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => toast('Setup link copied. Open it on the other device'), () => { window.prompt('Copy this link:', url); });
+    }
     else if (act === 'connect') {
-      const cid = $('#dgClient').value.trim();
+      const cid = $('#dgClient').value.trim().replace(/\s+/g, '').replace(/[\u200b-\u200d\ufeff]/g, '');
       const id = gdFolderId($('#dgLink').value);
       if (!cid) { toast('Paste your OAuth Client ID'); return; }
       if (!id) { toast('Paste the link of a Google Drive folder'); return; }
@@ -2146,6 +2160,18 @@ async function boot1() {
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* ignore */ }
   renderAll();
   fitBrand();
+  /* a setup link (#setup=...) copied from another device fills in the Client ID and folder */
+  try {
+    const m = location.hash.match(/^#setup=(.+)$/);
+    if (m) {
+      const d = JSON.parse(atob(m[1]));
+      if (d.c && d.f) {
+        lsSet('console-gclient', String(d.c));
+        lsSet('console-source', JSON.stringify({ type: 'drive', id: String(d.f), name: 'Google Drive' }));
+      }
+      history.replaceState(null, '', location.pathname + location.search);
+    }
+  } catch (e) { /* ignore a broken link */ }
   let src = null;
   try { src = JSON.parse(lsGet('console-source', 'null')); } catch (e) { /* ignore */ }
   if (src && src.type === 'drive' && src.id) {

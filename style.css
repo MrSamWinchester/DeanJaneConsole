@@ -461,13 +461,14 @@ input[type=range]::-moz-range-track{background:transparent}
 .intro .detail>*{animation-delay:.3s}
 .intro .player{animation-delay:.5s}
 .intro .side-foot{animation-delay:.45s}
-.intro #nav>*{animation:rise .5s ease backwards;animation-delay:calc(.18s + var(--i,0)*.03s)}
-.intro .list>:not(.home),.intro .list>.home>*{animation:rise .55s ease backwards;animation-delay:calc(.25s + var(--i,0)*.035s)}
-.list.swap>:not(.home),.list.swap>.home>*{animation:rise .4s ease backwards;animation-delay:calc(var(--i,0)*.03s)}
+.intro #nav>*{animation:rise .5s ease backwards;animation-delay:calc(.18s + var(--d,0s))}
+.intro .list>:not(.home),.intro .list>.home>*{animation:rise .55s ease backwards;animation-delay:calc(.25s + var(--d,0s))}
+.list.swap>:not(.home),.list.swap>.home>*{animation:rise .4s ease backwards;animation-delay:var(--d,0s)}
 @media (prefers-reduced-motion:reduce){.intro *,.list.swap *{animation:none!important}}
 
 /* round 3: title joins the intro; slower, even wave for long lists */
 .intro .head{animation:rise .55s ease backwards;animation-delay:.2s}
-.intro .list>:not(.home),.intro .list>.home>*{animation-delay:calc(.28s + var(--i,0)*.045s)}
-.list.swap>:not(.home),.list.swap>.home>*{animation:rise .5s ease backwards;animation-delay:calc(var(--i,0)*.045s)}
+.intro .list>:not(.home),.intro .list>.home>*{animation-delay:calc(.28s + var(--d,0s))}
+.list.swap>:not(.home),.list.swap>.home>*{animation:rise .5s ease backwards;animation-delay:var(--d,0s)}
 @media (prefers-reduced-motion:reduce){.intro .head{animation:none!important}}
+.dlg-drive .ghost{align-self:flex-start;padding:10px 14px;font-size:13px}
