@@ -677,9 +677,10 @@ async function loadVault(entries, name, key) {
   loadAllTags();
 }
 
-function setScanning(on, msg) {
+function setScanning(on) {
   S.scanning = on;
-  if (on) $('#list').innerHTML = `<div class="welcome"><div class="w-ico"><i class="fa-solid fa-circle-notch fa-spin"></i></div><p>${esc(msg || 'Loading…')}</p></div>`;
+  const l = $('#loader');
+  if (l) l.classList.toggle('on', !!on);
 }
 
 async function refresh() {
@@ -864,37 +865,23 @@ function scheduleHome() {
 }
 function homeHtml() {
   const items = S.items.filter((i) => !i.hidden);
-  const counts = {};
-  items.forEach((i) => { counts[i.section] = (counts[i.section] || 0) + 1; });
-  const tracks = S.base.filter((i) => i.kind === 'audio' && i.section === 'disc');
-  const words = S.base.filter((i) => i.kind === 'text' && i.text).reduce((n, i) => n + (i.text.match(/\S+/g) || []).length, 0);
-  const runtime = tracks.reduce((n, i) => n + (i.dur || 0), 0);
-  const stat = (v, l, ic) => `<div class="stat"><div class="si"><i class="fa-solid ${ic}"></i></div><div class="st"><b>${v}</b><small>${l}</small></div></div>`;
   const albums = S.albums.slice().sort((x, y) => dateTs(getDate(x)) - dateTs(getDate(y)) || natural.compare(x.title, y.title));
   const coverOf = (al) => (al.cover ? `<img alt="" src="${coverUrl(al.cover)}">` : '<i class="fa-solid fa-compact-disc"></i>');
   const grid = albums.slice(-12).map((al) => `<button class="alb" data-open="${al.uid}"><span class="cv">${coverOf(al)}</span><b>${esc(al.title)}</b><small>${esc(monthYear(getDate(al)))}</small></button>`).join('');
-  const mini = (it) => `<button class="mini" data-pick="${it.uid}"><span><i class="fa-solid ${it.kind === 'album' ? 'fa-compact-disc' : iconOf(it)} mi"></i>${esc(it.title)}</span><small>${esc(monthYear(getDate(it)))}</small></button>`;
-  const recent = items.slice().sort((x, y) => y.modified - x.modified).slice(0, 4);
-  const favs = items.filter((i) => S.meta.favs[i.path]).sort((x, y) => natural.compare(x.title, y.title)).slice(0, 4);
+  const recent = items.filter((i) => !(i.kind === 'audio' && i.section === 'disc')).sort((x, y) => y.modified - x.modified).slice(0, 9);
+  const row = (it) => {
+    const alb = it.kind === 'album';
+    const sub = alb ? 'Album' : (SEC[it.section] || SEC.other).label;
+    return `<button class="rrow" data-pick="${it.uid}"><span class="ri"><i class="fa-solid ${alb ? 'fa-compact-disc' : iconOf(it)}"></i></span><span class="rt"><b>${esc(it.title)}</b><small>${esc(sub)}</small></span><span class="rd">${esc(monthYear(getDate(it)))}</span></button>`;
+  };
   return `<div class="home">
     <section class="hsec home-main">
       <div class="hsec-h"><span>Discography</span><button data-go="disc">View All</button></div>
       ${albums.length ? `<div class="alb-grid">${grid}</div>` : '<div class="hint-line">No albums yet.</div>'}
     </section>
     <aside class="home-side">
-      <div class="hsec-h"><span>Statistics</span></div>
-      <div class="side-rows">
-        <div class="stats">
-          ${stat(S.albums.length, 'Albums', 'fa-compact-disc')}
-          ${stat(tracks.length, 'Tracks', 'fa-music')}
-          ${stat(runtime ? fmtLong(runtime) : '—', 'Runtime', 'fa-clock')}
-          ${stat(counts.lyrics || 0, 'Lyrics', 'fa-feather-pointed')}
-          ${stat(counts.demo || 0, 'Demos', 'fa-microphone-lines')}
-          ${stat(words ? words.toLocaleString('en-US') : '—', 'Words', 'fa-pen-nib')}
-        </div>
-        <section class="hsec"><div class="hsec-h"><span>Recent</span></div>${recent.map(mini).join('')}</section>
-        <section class="hsec"><div class="hsec-h"><span>Favorites</span></div>${favs.length ? favs.map(mini).join('') : '<div class="hint-line">Star a file and it will be pinned here.</div>'}</section>
-      </div>
+      <div class="hsec-h"><span>Recent</span></div>
+      <div class="rec">${recent.length ? recent.map(row).join('') : '<div class="hint-line">Nothing here yet.</div>'}</div>
     </aside>
   </div>`;
 }
@@ -2031,6 +2018,9 @@ function armAutoResume() {
 }
 
 async function boot() {
+  try { await boot1(); } finally { setScanning(false); }
+}
+async function boot1() {
   applyTheme();
   pvol.value = S.vol; setFill(pvol); updateMuteIcon(); applyVolume();
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* ignore */ }

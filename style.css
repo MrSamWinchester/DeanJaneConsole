@@ -372,3 +372,30 @@ input[type=range]::-moz-range-track{background:transparent}
 .dlg-drive input{height:42px;padding:0 14px;border:1px solid var(--line2);border-radius:11px;background:transparent;font-size:14px;letter-spacing:0;text-transform:none;color:var(--text)}
 .dlg-drive p{margin:0;font-size:12px;color:var(--muted)}
 .dlg-drive .primary{align-self:flex-start}
+
+/* full-screen preloader */
+.loader{position:fixed;inset:0;z-index:90;background:var(--bg);display:flex;align-items:center;justify-content:center;opacity:0;visibility:hidden;transition:opacity .25s ease,visibility 0s .25s}
+.loader.on{opacity:1;visibility:visible;transition:none}
+.spin{width:22px;height:22px;border:2px solid var(--line2);border-top-color:var(--text);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* logo */
+.brand{gap:11px}
+.logo{display:flex;align-items:flex-end;justify-content:center;gap:3px;width:32px;height:32px;padding:7px 0;border-radius:10px;background:var(--inv);flex:0 0 auto}
+.logo i{display:block;width:3px;border-radius:2px;background:var(--invtext)}
+.logo i:nth-child(1){height:45%}.logo i:nth-child(2){height:100%}.logo i:nth-child(3){height:65%}.logo i:nth-child(4){height:85%}
+.brand-t{display:flex;flex-direction:column;align-items:flex-start;gap:3px;line-height:1}
+.brand-t b{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.brand-t small{font-size:9.5px;font-weight:500;letter-spacing:.26em;text-transform:uppercase;color:var(--muted)}
+
+/* home: recent files */
+.home-side{max-width:480px;gap:2px;margin-top:0}
+.rec{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.rrow{flex:1 1 0;min-height:46px;display:flex;align-items:center;gap:14px;width:100%;padding:0 10px;margin:0 -10px;border-radius:12px;text-align:left;transition:background .15s}
+.rrow:hover{background:var(--hover)}
+.rrow .ri{flex:0 0 auto;width:36px;height:36px;border:1px solid var(--line2);border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--muted);transition:color .15s,border-color .15s}
+.rrow:hover .ri{color:var(--text);border-color:var(--muted)}
+.rrow .rt{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:3px}
+.rrow .rt b{font-weight:500;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rrow .rt small{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.rrow .rd{flex:0 0 auto;font-size:12px;color:var(--muted)}
