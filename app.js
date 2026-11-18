@@ -125,6 +125,7 @@ const WIDE_SECS = new Set(['docs', 'n_docs', 'n_notes', 'n_bib']); /* these read
 /* ===== Details panel widths in px (desktop) — change the numbers here =====
    Everything else (Home, Demos, Discography, Videos...) uses the default 410px,
    which lives in style.css in the .app rule: var(--detail-w,410px). */
+const HOME_DETAIL_MIN = 1700; /* the empty details panel is shown on Home only in windows at least this wide (px) */
 const DETAIL_W = { lyrics: 499, docs: 929, n_docs: 929, n_notes: 914, n_bib: 939 };
 
 /* folder-name rules (Russian and English names both work) */
@@ -631,12 +632,14 @@ async function pickLocal() {
       await idb.set('handle', h);
       S.saved = h;
       await openHandle(h);
+      return 'ok';
     } catch (e) {
       if (e && e.name !== 'AbortError') { console.error(e); toast('Could not open the folder'); }
+      return 'cancel';
     }
-  } else {
-    $('#fallback').click();
   }
+  $('#fallback').click();
+  return 'pending';
 }
 
 async function openHandle(h) {
@@ -660,6 +663,7 @@ async function openHandle(h) {
     console.error(e);
     toast('Error reading the folder');
     setScanning(false);
+    if (isLocked()) openSourceDialog(true);
   }
 }
 
@@ -681,11 +685,13 @@ async function loadVault(entries, name, key) {
     if (again) { S.now = again; S.queue = S.queue.map((q) => S.byPath.get(q.path) || q); }
   }
   S.selected = (prevSelected && S.byPath.get(prevSelected)) || null; /* a fresh start shows an empty details panel */
+  setStatus('Sorting your library…');
   S.dinfo = null;
   if (S.source === 'drive') {
     S.dinfo = (await idb.get('dinfo:' + S.metaKey)) || {};
     if (!S.dinfo.tags) S.dinfo.tags = {};
     if (!S.dinfo.meta) S.dinfo.meta = {};
+    if (S.dinfo.v !== 2) { S.dinfo.meta = {}; S.dinfo.v = 2; }
     S.base.forEach((it) => {
       const f = it.file, m = f && f.remote && S.dinfo.meta[f.id];
       if (m && m.mod === f.lastModified && (it.kind === 'audio' || it.kind === 'video') && m.dur > 0) {
@@ -696,20 +702,32 @@ async function loadVault(entries, name, key) {
   S.vault = true;
   $('#folderName').textContent = name;
   S.base.forEach((it) => { if (it.kind === 'audio' || it.kind === 'video') queueMeta(it); });
+  setStatus('Loading covers and track info…');
   /* keep the preloader until covers and tags are in, so the page doesn't redraw after it opens */
   const ready = Promise.all([preloadCovers(), loadAllTags()]).catch(() => {});
   await Promise.race([ready, new Promise((r) => setTimeout(r, 12000))]);
   renderAll();
+  closeDialog();
+  document.body.classList.remove('locked');
   setScanning(false);
   loadAllText();
 }
 
-function setScanning(on) {
+const isLocked = () => document.body.classList.contains('locked');
+function setStatus(msg) {
+  const m = $('#loaderMsg');
+  if (!m) return;
+  m.textContent = msg || '';
+  $('#loader').classList.toggle('has-msg', !!msg);
+}
+function setScanning(on, msg) {
   const was = S.scanning;
   S.scanning = on;
   const l = $('#loader');
   if (l) l.classList.toggle('on', !!on);
-  if (!on && (was || !S.introShown)) { S.introShown = true; requestAnimationFrame(runIntro); }
+  if (!on) setStatus('');
+  else if (msg) setStatus(msg);
+  if (!on && !isLocked() && (was || !S.introShown)) { S.introShown = true; requestAnimationFrame(runIntro); }
 }
 /* gentle top-to-bottom fade-in: everything on entering the site, only the list area when switching sections */
 /* the whole list fades in as one smooth sweep: total spread ~0.22s however many rows there are */
@@ -775,6 +793,26 @@ function cacheMeta(it) {
   S.dinfo.meta[it.file.id] = { mod: it.file.lastModified, dur: it.dur, vw: it.vw || 0, vh: it.vh || 0, thumb: it.thumb || '' };
   dinfoSave();
 }
+/* cut off pure-black bars that are part of the video picture, and scale to a small still */
+function cropBars(cv, g) {
+  const w = cv.width, h = cv.height;
+  const d = g.getImageData(0, 0, w, h).data;
+  const dark = (x, y) => { const i = (y * w + x) * 4; return d[i] + d[i + 1] + d[i + 2] < 30; };
+  const rowDark = (y) => { for (let x = 0; x < w; x += 3) if (!dark(x, y)) return false; return true; };
+  const colDark = (x) => { for (let y = 0; y < h; y += 3) if (!dark(x, y)) return false; return true; };
+  let t = 0, b = h - 1, l = 0, r = w - 1;
+  while (t < b && rowDark(t)) t++;
+  while (b > t && rowDark(b)) b--;
+  while (l < r && colDark(l)) l++;
+  while (r > l && colDark(r)) r--;
+  let cw = r - l + 1, ch = b - t + 1;
+  if (cw < w * 0.3 || ch < h * 0.3 || (cw > w * 0.97 && ch > h * 0.97)) { l = 0; t = 0; cw = w; ch = h; }
+  const out = document.createElement('canvas');
+  const k = Math.min(1, 240 / cw);
+  out.width = Math.max(1, Math.round(cw * k)); out.height = Math.max(1, Math.round(ch * k));
+  out.getContext('2d').drawImage(cv, l, t, cw, ch, 0, 0, out.width, out.height);
+  return out;
+}
 function pumpMeta() {
   while (loading < 4 && loadQ.length) {
     const it = loadQ.shift();
@@ -806,10 +844,10 @@ function pumpMeta() {
     el.onseeked = () => {
       if (finished || it.kind !== 'video') return;
       try {
-        const sc = Math.min(1, 240 / (el.videoWidth || 240));
+        const sc = Math.min(1, 480 / (el.videoWidth || 480));
         const cv = document.createElement('canvas');
         cv.width = Math.max(1, Math.round(el.videoWidth * sc)); cv.height = Math.max(1, Math.round(el.videoHeight * sc));
-        const g = cv.getContext('2d');
+        const g = cv.getContext('2d', { willReadFrequently: true });
         g.drawImage(el, 0, 0, cv.width, cv.height);
         if (!it._thumbTry) { /* a nearly black frame: try another spot once */
           const px = g.getImageData(0, 0, cv.width, cv.height).data;
@@ -817,7 +855,7 @@ function pumpMeta() {
           for (let i = 0; i < px.length; i += 16) sum += px[i] + px[i + 1] + px[i + 2];
           if (sum / (px.length / 16) / 3 < 14) { it._thumbTry = 1; el.currentTime = el.duration * 0.3; return; }
         }
-        it.thumb = cv.toDataURL('image/jpeg', 0.72);
+        it.thumb = cropBars(cv, g).toDataURL('image/jpeg', 0.72);
       } catch (e) { /* no preview */ }
       done(true);
     };
@@ -939,7 +977,7 @@ function homeHtml() {
   const KIND_LABEL = { lyrics: 'Lyrics', demo: 'Demo', disc: 'Track', docs: 'Document', n_docs: 'Document', video: 'Video', n_video: 'Video', lyricvideo: 'Lyric Video', n_notes: 'Note', n_bib: 'Novel' };
   const row = (it) => {
     const alb = it.kind === 'album';
-    const sub = alb ? 'Album' : (KIND_LABEL[it.section] || 'File');
+    const sub = (SEC[alb ? 'disc' : it.section] || SEC.other).label;
     return `<button class="rrow" data-pick="${it.uid}"><span class="ri"><i class="fa-solid ${alb ? 'fa-compact-disc' : iconOf(it)}"></i></span><span class="rt"><b>${esc(it.title)}</b><small>${esc(sub)}</small></span><span class="rd">${esc(monthYear(getDate(it)))}</span></button>`;
   };
   return `<div class="home">
@@ -958,7 +996,7 @@ function homeHtml() {
 const BRAND_MAX = 14; /* largest logo font size in px */
 function fitBrand() {
   const t = $('.brand-t'), nav = $('#nav');
-  if (!t || !nav) return;
+  if (!t || !nav) return; /* the logo is an icon only now */
   const b = nav.querySelector('button');
   const cs = b ? getComputedStyle(b) : null;
   const target = (nav.clientWidth - (cs ? parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) : 24)) * 0.8; /* a bit narrower than the menu */
@@ -1602,6 +1640,9 @@ function applyDetailWidth() {
   if (wide) app.style.setProperty('--detail-w', 'min(' + (DETAIL_W[it.section] || 914) + 'px, calc(100vw - 600px))');
   else if (S.section === 'lyrics' && window.innerWidth > 1000) app.style.setProperty('--detail-w', DETAIL_W.lyrics + 'px');
   else app.style.removeProperty('--detail-w');
+  const hide = home && window.innerWidth > 1000 && window.innerWidth < HOME_DETAIL_MIN;
+  if (hide) app.style.setProperty('--detail-w', '0px');
+  document.body.classList.toggle('no-detail', hide);
 }
 
 /* ---- the date is plain text; a click turns it into an input (no visible button) ---- */
@@ -1850,7 +1891,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key;
-  if (k === 'Escape') { setDetailOpen(false); setMenuOpen(false); closeDialog(); }
+  if (k === 'Escape') { setDetailOpen(false); setMenuOpen(false); const dd = $('#dlg'); if (dd && !dd.dataset.req) closeDialog(); }
   else if (k === ' ') {
     e.preventDefault();
     if (S.selected && S.selected.kind === 'video' && videoEl) toggleVideo(); else toggleAudio();
@@ -2105,10 +2146,11 @@ async function refreshDriveInBackground(id, cached) {
   } catch (e) { /* offline or signed out: the cached view stays */ }
 }
 async function openDrive(id, interactive, quiet, fresh) {
-  setScanning(true);
+  setScanning(true, 'Connecting to Google Drive…');
   try {
     const cached = fresh ? null : await idb.get('dlist:' + id);
     if (cached && cached.entries && cached.entries.length) {
+      setStatus('Opening your library…');
       await ensureSW();
       S.handle = null; S.source = 'drive'; S.drive = { id, name: cached.name };
       lsSet('console-source', JSON.stringify({ type: 'drive', id, name: cached.name }));
@@ -2120,6 +2162,7 @@ async function openDrive(id, interactive, quiet, fresh) {
     if (!gdValid()) await gdToken(interactive);
     await ensureSW();
     pushToken();
+    setStatus('Reading Google Drive…');
     const meta = await (await gdFetch(GD_API + '/drive/v3/files/' + id + '?fields=name,mimeType&supportsAllDrives=true')).json();
     if (meta.mimeType !== GD_FOLDER) throw new Error('That link is not a folder');
     const entries = await gdWalk(id, () => {});
@@ -2132,19 +2175,21 @@ async function openDrive(id, interactive, quiet, fresh) {
     setScanning(false);
     renderList();
     if (!quiet) toast(e.message || 'Could not open Google Drive');
+    if (isLocked()) openSourceDialog(true);
     throw e;
   }
 }
 
 /* ---- source dialog: This Computer / Google Drive ---- */
 function closeDialog() { const d = $('#dlg'); if (d) d.remove(); }
-function openSourceDialog() {
+function openSourceDialog(required) {
   closeDialog();
   const link = S.drive ? 'https://drive.google.com/drive/folders/' + S.drive.id : '';
   const d = document.createElement('div');
-  d.className = 'dlg'; d.id = 'dlg';
+  d.className = 'dlg' + (required ? ' solid' : ''); d.id = 'dlg';
+  if (required) d.dataset.req = '1';
   d.innerHTML = `<div class="dlg-box" role="dialog" aria-label="Choose Source">
-    <div class="dlg-h"><h3>Choose Source</h3><button class="iconbtn sm" data-d="close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></div>
+    <div class="dlg-h"><h3>Choose Source</h3>${required ? '' : '<button class="iconbtn sm" data-d="close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>'}</div>${required ? '<p class="dlg-sub">Where are your files? You can change this later.</p>' : ''}
     <div class="dlg-opts">
       <button class="ghost" data-d="local"><i class="fa-solid fa-computer"></i>This Computer</button>
       <button class="ghost ${S.source === 'drive' ? 'on' : ''}" data-d="drive"><i class="fa-brands fa-google-drive"></i>Google Drive</button>
@@ -2156,15 +2201,24 @@ function openSourceDialog() {
       <button class="primary" data-d="connect"><i class="fa-brands fa-google-drive"></i>Connect</button>
       <button class="ghost" data-d="share"><i class="fa-solid fa-link"></i>Copy setup link for another device</button>
     </div>
+    ${required && S.saved ? `<button class="ghost" data-d="resume"><i class="fa-solid fa-clock-rotate-left"></i>Continue: ${esc(S.saved.name)}</button>` : ''}
   </div>`;
   document.body.appendChild(d);
   d.addEventListener('click', (e) => {
-    if (e.target === d) { closeDialog(); return; }
+    if (e.target === d) { if (!required) closeDialog(); return; }
     const b = e.target.closest('[data-d]');
     if (!b) return;
     const act = b.dataset.d;
     if (act === 'close') closeDialog();
-    else if (act === 'local') { closeDialog(); pickLocal(); }
+    else if (act === 'local') {
+      if (required && !window.showDirectoryPicker) { pickLocal(); return; } /* keep the dialog until the folder arrives */
+      closeDialog();
+      pickLocal().then((r) => { if (r === 'cancel' && isLocked()) openSourceDialog(true); });
+    }
+    else if (act === 'resume') {
+      closeDialog();
+      continueSaved().then(() => { if (isLocked() && !S.vault) openSourceDialog(true); });
+    }
     else if (act === 'drive') { $('#dgForm').hidden = false; loadGIS().catch(() => {}); $('#dgLink').focus(); }
     else if (act === 'share') {
       const cid = $('#dgClient').value.trim().replace(/\s+/g, '');
@@ -2186,6 +2240,139 @@ function openSourceDialog() {
   if (!$('#dgForm').hidden) loadGIS().catch(() => {});
 }
 function pickFolder() { openSourceDialog(); }
+
+
+/* ================= profiles: sign in / create account (stored on this device) ================= */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const NICK_RX = /^[\p{L}\p{N}._-]{2,24}$/u;
+const b64 = (u8) => btoa(String.fromCharCode(...u8));
+const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+function getUsers() { try { return (JSON.parse(lsGet('console-users', '[]')) || []).map((u) => Object.assign(u, { nick: String(u.nick || '').replace(/^@+/, '') })); } catch (e) { return []; } }
+function saveUsers(u) { lsSet('console-users', JSON.stringify(u)); }
+async function hashPw(pw, salt) {
+  if (!(window.crypto && crypto.subtle)) throw new Error('This browser cannot protect passwords (open the site over https or localhost)');
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: unb64(salt), iterations: 150000 }, key, 256);
+  return b64(new Uint8Array(bits));
+}
+function sessionUser() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem('console-session') || sessionStorage.getItem('console-session') || 'null'); } catch (e) { /* none */ }
+  return s ? getUsers().find((u) => u.id === s.id) || null : null;
+}
+function rememberSession(user, remember) {
+  try {
+    localStorage.removeItem('console-session'); sessionStorage.removeItem('console-session');
+    (remember ? localStorage : sessionStorage).setItem('console-session', JSON.stringify({ id: user.id }));
+  } catch (e) { /* ignore */ }
+}
+function signOut() {
+  try { localStorage.removeItem('console-session'); sessionStorage.removeItem('console-session'); } catch (e) { /* ignore */ }
+  location.reload();
+}
+const displayName = (u) => (u.preferNick ? '@' + u.nick : (u.first + ' ' + u.last).trim());
+function applyProfile() {
+  const hb = $('#homeBtn');
+  if (hb && S.user) hb.title = displayName(S.user);
+  const lo = $('#logoutBtn');
+  if (lo && S.user) lo.title = 'Sign out @' + S.user.nick;
+}
+/* the nickname always starts with @, any letter case */
+function fixNick(inp) { inp.value = inp.value.replace(/[@\s]+/g, ''); }
+function showAuth() {
+  return new Promise((resolve) => {
+    closeDialog();
+    const hasUsers = getUsers().length > 0;
+    const d = document.createElement('div');
+    d.className = 'dlg solid'; d.id = 'dlg'; d.dataset.req = '1';
+    let mode = hasUsers ? 'in' : 'up';
+    const chk = (id, text, on) => `<label class="chk"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><span>${text}</span></label>`;
+    const render = () => {
+      d.innerHTML = `<div class="dlg-box" role="dialog" aria-label="Account">
+        <div class="dlg-h"><h3>${mode === 'in' ? 'Welcome Back' : 'Create Your Profile'}</h3></div>
+        <div class="dlg-opts">
+          <button class="ghost ${mode === 'in' ? 'on' : ''}" data-m="in" type="button"><i class="fa-solid fa-right-to-bracket"></i>Sign In</button>
+          <button class="ghost ${mode === 'up' ? 'on' : ''}" data-m="up" type="button"><i class="fa-solid fa-user-plus"></i>Create Account</button>
+        </div>
+        <form class="dlg-drive" id="authForm" novalidate>
+          ${mode === 'up' ? `<div class="two"><label>First Name<input id="aFirst" type="text" autocomplete="given-name" maxlength="40"></label><label>Last Name<input id="aLast" type="text" autocomplete="family-name" maxlength="40"></label></div>` : ''}
+          <label>Nickname<span class="nick"><b>@</b><input id="aNick" type="text" placeholder="nickname" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="24"></span></label>
+          ${mode === 'up' ? chk('aPref', 'Prefer nickname over name', false) : ''}
+          <label>Password<input id="aPass" type="password" autocomplete="${mode === 'up' ? 'new-password' : 'current-password'}"></label>
+          ${mode === 'up' ? '<label>Confirm Password<input id="aPass2" type="password" autocomplete="new-password"></label>' : ''}
+          ${chk('aRem', 'Remember me on this device', true)}
+          <p class="auth-err" id="authErr" hidden></p>
+          <button class="primary" type="submit" id="authGo"><i class="fa-solid ${mode === 'in' ? 'fa-right-to-bracket' : 'fa-user-plus'}"></i>${mode === 'in' ? 'Sign In' : 'Create Account'}</button>
+        </form>
+      </div>`;
+      const nick = $('#aNick');
+      nick.addEventListener('input', () => fixNick(nick));
+      (mode === 'up' ? $('#aFirst') : nick).focus();
+    };
+    const err = (m) => { const e = $('#authErr'); e.textContent = m; e.hidden = !m; };
+    d.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-m]');
+      if (b && b.dataset.m !== mode) { mode = b.dataset.m; render(); }
+    });
+    d.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const go = $('#authGo');
+      const nick = $('#aNick').value.trim(), pass = $('#aPass').value, rem = $('#aRem').checked;
+      const users = getUsers();
+      go.disabled = true;
+      try {
+        if (mode === 'in') {
+          const u = users.find((x) => x.nick.toLowerCase() === nick.toLowerCase());
+          if (!nick || !pass) throw new Error('Enter your nickname and password');
+          if (!u || (await hashPw(pass, u.salt)) !== u.hash) throw new Error('Wrong nickname or password');
+          rememberSession(u, rem);
+          d.remove(); resolve(u);
+          return;
+        }
+        const first = $('#aFirst').value.trim(), last = $('#aLast').value.trim(), pass2 = $('#aPass2').value;
+        if (!first || !last) throw new Error('Enter your first and last name');
+        if (!NICK_RX.test(nick)) throw new Error('Nickname: 2–24 letters, digits, dot, dash or underscore');
+        if (users.some((x) => x.nick.toLowerCase() === nick.toLowerCase())) throw new Error('This nickname is already taken');
+        if (pass.length < 6) throw new Error('Password must be at least 6 characters');
+        if (pass !== pass2) throw new Error('Passwords do not match');
+        const salt = b64(crypto.getRandomValues(new Uint8Array(16)));
+        const u = { id: 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), first, last, nick, preferNick: $('#aPref').checked, salt, hash: await hashPw(pass, salt), created: Date.now() };
+        users.push(u); saveUsers(users);
+        rememberSession(u, rem);
+        d.remove(); resolve(u);
+      } catch (ex) {
+        err(ex.message || 'Something went wrong');
+        go.disabled = false;
+      }
+    });
+    document.body.appendChild(d);
+    render();
+  });
+}
+
+/* after sign-in: open the saved library, or ask where the files are */
+async function enterApp(user) {
+  S.user = user;
+  applyProfile();
+  setScanning(true, 'Signing you in…');
+  await sleep(350);
+  setStatus('Preparing your workspace…');
+  let src = null;
+  try { src = JSON.parse(lsGet('console-source', 'null')); } catch (e) { /* ignore */ }
+  if (src && src.type === 'drive' && src.id) {
+    S.source = 'drive'; S.drive = { id: src.id, name: src.name || 'Google Drive' };
+    try { await openDrive(src.id, false, true); return; } catch (e) { return; } /* openDrive reopens the chooser on failure */
+  }
+  const h = await idb.get('handle');
+  if (h) {
+    S.saved = h;
+    let state = 'prompt';
+    try { state = await h.queryPermission({ mode: 'read' }); } catch (e) { /* needs a gesture */ }
+    if (state === 'granted') { await openHandle(h); return; }
+  }
+  setScanning(false);
+  openSourceDialog(true);
+}
 
 /* ================= theme / boot ================= */
 function applyTheme() {
@@ -2231,6 +2418,7 @@ async function boot1() {
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* ignore */ }
   renderAll();
   fitBrand();
+  const lo = $('#logoutBtn'); if (lo) lo.addEventListener('click', signOut);
   /* a setup link (#setup=...) copied from another device fills in the Client ID and folder */
   try {
     const m = location.hash.match(/^#setup=(.+)$/);
@@ -2243,22 +2431,11 @@ async function boot1() {
       history.replaceState(null, '', location.pathname + location.search);
     }
   } catch (e) { /* ignore a broken link */ }
-  let src = null;
-  try { src = JSON.parse(lsGet('console-source', 'null')); } catch (e) { /* ignore */ }
-  if (src && src.type === 'drive' && src.id) {
-    S.source = 'drive'; S.drive = { id: src.id, name: src.name || 'Google Drive' };
-    try { await openDrive(src.id, false, true); } catch (e) { renderList(); armAutoResume(); }
-    return;
-  }
-  const h = await idb.get('handle');
-  if (h) {
-    S.saved = h;
-    let state = 'prompt';
-    try { state = await h.queryPermission({ mode: 'read' }); } catch (e) { /* needs a gesture */ }
-    if (state === 'granted') { await openHandle(h); return; }
-    renderList();
-    armAutoResume();
-  }
+  document.body.classList.add('locked');
+  await sleep(450); /* a short, quiet preloader before the sign-in form */
+  let user = sessionUser();
+  if (!user) { setScanning(false); user = await showAuth(); }
+  await enterApp(user);
 }
 boot();
 

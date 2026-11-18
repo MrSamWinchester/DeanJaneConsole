@@ -486,3 +486,49 @@ input[type=range]::-moz-range-track{background:transparent}
 .intro .player{animation-delay:.36s}
 .list.swap{animation:rise .5s ease}
 @media (prefers-reduced-motion:reduce){.intro *,.list.swap{animation:none!important}}
+
+/* sign-in / create account, preloader status text, locked app */
+body.locked #app{visibility:hidden}
+.loader{flex-direction:column}
+.loader-msg{position:absolute;left:0;right:0;bottom:13vh;margin:0;text-align:center;font-size:13px;color:var(--muted);opacity:0;transition:opacity .3s}
+.loader.has-msg .loader-msg{opacity:1}
+.dlg.solid{background:var(--bg)}
+.dlg-sub{margin:-8px 0 0;font-size:13px;color:var(--muted)}
+.dlg-drive .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.dlg-drive .two label{min-width:0}
+.dlg-drive label.chk{flex-direction:row;align-items:center;gap:10px;font-size:13px;letter-spacing:0;text-transform:none;color:var(--text);cursor:pointer}
+.dlg-drive label.chk input{appearance:none;-webkit-appearance:none;width:18px;height:18px;padding:0;flex:0 0 auto;border:1px solid var(--line2);border-radius:5px;background:transparent;display:inline-grid;place-content:center;cursor:pointer}
+.dlg-drive label.chk input::after{content:'';width:9px;height:5px;border:2px solid var(--invtext);border-top:0;border-right:0;transform:rotate(-45deg) translate(1px,-1px);opacity:0}
+.dlg-drive label.chk input:checked{background:var(--inv);border-color:var(--inv)}
+.dlg-drive label.chk input:checked::after{opacity:1}
+.dlg-drive input:focus{outline:none;border-color:var(--muted)}
+.auth-err{color:#ef6a6a!important;font-size:13px!important}
+.dlg-drive #authGo{align-self:stretch;justify-content:center}
+.dlg-opts .ghost i{font-size:16px}
+
+/* round 5: logo is an icon only, Home layout holds at every width, no empty details panel in narrower windows */
+.brand{width:100%;height:var(--brand-h,64px);padding:0;justify-content:center;align-items:center}
+.brand i{width:auto;font-size:26px;color:var(--text);transition:transform .25s ease}
+.brand:hover i{transform:scale(1.14)}
+body.no-detail .detail{display:none}
+
+.home{--R:clamp(220px,26cqw,420px);--G:clamp(28px,3cqw,56px);--cv:max(64px,min(calc((100cqh - 240px) / 3),calc((100cqw - 20px - var(--G) - var(--R) - 66px) / 4)));grid-template-columns:max-content minmax(0,1fr);gap:var(--G)}
+.home-main{min-width:0}
+.home-side{max-width:560px}
+.alb-grid{grid-template-columns:repeat(4,var(--cv))}
+.home-main .alb-grid{grid-template-rows:repeat(3,calc(var(--cv) + 50px))}
+@container (max-width:599px){
+  .home{--cv:calc((100cqw - 20px - 22px) / 2);grid-template-columns:1fr;gap:40px}
+  .alb-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .home-main .alb-grid{grid-template-rows:none}
+  .home-side{max-width:none}
+}
+
+/* nickname: fixed @ in front, not part of the value */
+.nick{position:relative;display:block}
+.nick b{position:absolute;left:14px;top:50%;transform:translateY(-50%);font-weight:500;font-size:14px;color:var(--muted);pointer-events:none;letter-spacing:0;text-transform:none}
+.nick input{width:100%;padding-left:30px}
+
+/* preloader status sits right under the spinner */
+.loader-msg{bottom:auto;top:calc(50% + 34px)}
+.brand{--brand-h:52px}

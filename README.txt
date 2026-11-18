@@ -56,3 +56,15 @@ Files needed for Google Drive (4 files, keep them together in the same folder)
   sw.js is a small helper that streams songs, videos and covers from Drive with your sign-in.
   When you update the site on GitHub, upload all four files. After uploading press Ctrl+F5 once,
   and if songs do not play, close the tab and open the site again (the helper updates on reload).
+
+PROFILES (sign in / create account)
+===================================
+On start you see a short loader, then Sign In / Create Account, then (only if no folder is saved yet) the
+Choose Source window, then a loader with status text, then the app.
+  - Nickname is the login. It always starts with @ and can be typed in any letter case (login ignores case).
+  - Name shown in the logo: "First Last", or the nickname if "Prefer nickname over name" was ticked.
+  - "Remember me on this device" keeps you signed in; without it you sign in again after closing the tab.
+  - Sign out: the arrow button at the bottom of the menu.
+  - Profiles are stored in this browser on this device only (passwords are salted and hashed, never saved as text).
+    A profile created on one device does not exist on another one yet. The chosen folder / Drive is shared by
+    all profiles on the same device.
