@@ -872,7 +872,7 @@ function homeHtml() {
   const albums = S.albums.slice().sort((x, y) => dateTs(getDate(x)) - dateTs(getDate(y)) || natural.compare(x.title, y.title));
   const coverOf = (al) => (al.cover ? `<img alt="" src="${coverUrl(al.cover)}">` : '<i class="fa-solid fa-compact-disc"></i>');
   const grid = albums.slice(-12).map((al) => `<button class="alb" data-open="${al.uid}"><span class="cv">${coverOf(al)}</span><b>${esc(al.title)}</b><small>${esc(monthYear(getDate(al)))}</small></button>`).join('');
-  const recent = items.filter((i) => !(i.kind === 'audio' && i.section === 'disc')).sort((x, y) => y.modified - x.modified).slice(0, 16);
+  const recent = items.filter((i) => !(i.kind === 'audio' && i.section === 'disc')).sort((x, y) => y.modified - x.modified).slice(0, 40);
   const row = (it) => {
     const alb = it.kind === 'album';
     const sub = alb ? 'Album' : (SEC[it.section] || SEC.other).label;
@@ -880,7 +880,7 @@ function homeHtml() {
   };
   return `<div class="home">
     <section class="hsec home-main">
-      <div class="hsec-h"><span>Discography</span><button data-go="disc">View All</button></div>
+      <div class="hsec-h"><span>Discography</span></div>
       ${albums.length ? `<div class="alb-grid">${grid}</div>` : '<div class="hint-line">No albums yet.</div>'}
     </section>
     <aside class="home-side">
@@ -891,15 +891,17 @@ function homeHtml() {
 }
 
 /* Recent: rows of equal height, as many as fit exactly into the height of the three album rows */
-const REC_ROW = 52;
+const REC_ROW = 46;
 function fitRecent() {
   const rec = $('.rec'), g = $('.alb-grid');
   if (!rec || !g) return;
   const h = g.offsetHeight;
   if (!h) return;
   rec.style.height = h + 'px';
+  const rows = [...rec.children];
   const n = Math.max(1, Math.floor(h / REC_ROW));
-  [...rec.children].forEach((r, i) => { r.style.display = i < n ? '' : 'none'; });
+  const pitch = rows.length >= n ? h / n : REC_ROW; /* stretch only when there are enough files to fill the height */
+  rows.forEach((r, i) => { r.style.display = i < n ? '' : 'none'; r.style.flex = 'none'; r.style.height = pitch + 'px'; });
 }
 if (window.ResizeObserver) new ResizeObserver(() => fitRecent()).observe($('#list'));
 

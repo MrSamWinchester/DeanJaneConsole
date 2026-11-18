@@ -407,3 +407,12 @@ input[type=range]::-moz-range-track{background:transparent}
 .rec{flex:none}
 .rrow{flex:1 1 0;min-height:0}
 .rrow{width:calc(100% + 20px)}
+
+/* logo: text only, aligned to the menu rows (icon edge to count edge) */
+.brand{width:100%;padding:0 12px;gap:0;justify-content:center}
+.brand-t{display:block;font-size:14px;font-weight:600;letter-spacing:inherit;line-height:1;white-space:nowrap}
+.brand-t b{font-weight:600;font-size:inherit;letter-spacing:inherit;color:var(--text)}
+.brand-t span{color:var(--muted);font-weight:600;font-size:inherit;letter-spacing:inherit}
+/* Recent: denser rows */
+.rrow{margin:0 -10px}
+.rrow .ri{width:32px;height:32px;border-radius:10px;font-size:12px}
