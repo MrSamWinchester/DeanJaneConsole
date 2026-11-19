@@ -4,6 +4,7 @@ self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
 self.addEventListener('message', (e) => {
   const d = e.data || {};
+  if (d.type === 'claim') { e.waitUntil(self.clients.claim()); return; }
   if (d.type === 'token') { TOKEN = d.token; EXP = d.exp; if (d.api) API = d.api; }
 });
 

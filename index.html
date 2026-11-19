@@ -13,11 +13,11 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="loader on" id="loader" aria-label="Loading"><span class="spin"></span></div>
+<div class="loader on" id="loader" aria-label="Loading"><span class="spin"></span><p class="loader-msg" id="loaderMsg"></p></div>
 <div class="app" id="app">
 
   <aside class="side">
-    <button class="brand" id="homeBtn" aria-label="Dean Jane Console, go to Home">
+    <button class="brand" id="homeBtn" aria-label="Home" title="Home">
       <i class="fa-brands fa-pied-piper" aria-hidden="true"></i>
     </button>
     <nav class="nav" id="nav" aria-label="Sections"></nav>
@@ -26,6 +26,7 @@
         <button class="folder" id="folderBtn" title="Choose or change folder"><i class="fa-solid fa-folder"></i><span id="folderName">Choose Folder</span></button>
         <button class="iconbtn sm" id="refreshBtn" aria-label="Refresh file list" title="Refresh file list"><i class="fa-solid fa-rotate"></i></button>
         <button class="iconbtn sm" id="themeBtn" aria-label="Toggle theme" title="Toggle theme"><i class="fa-solid fa-sun"></i></button>
+        <button class="iconbtn sm" id="logoutBtn" aria-label="Sign out" title="Sign out"><i class="fa-solid fa-right-from-bracket"></i></button>
       </div>
     </div>
   </aside>

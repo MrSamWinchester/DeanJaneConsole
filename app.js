@@ -68,9 +68,11 @@ const idb = {
     if (this.db) return Promise.resolve(this.db);
     return new Promise((res, rej) => {
       const r = indexedDB.open('music-vault', 1);
+      const to = setTimeout(() => rej(new Error('Browser storage is busy')), 4000);
       r.onupgradeneeded = () => r.result.createObjectStore('kv');
-      r.onsuccess = () => { this.db = r.result; res(r.result); };
-      r.onerror = () => rej(r.error);
+      r.onsuccess = () => { clearTimeout(to); this.db = r.result; this.db.onversionchange = () => { this.db.close(); this.db = null; }; res(r.result); };
+      r.onerror = () => { clearTimeout(to); rej(r.error); };
+      r.onblocked = () => { /* another old tab holds the database: the timeout above lets us go on */ };
     });
   },
   async get(k) {
@@ -1957,7 +1959,7 @@ const GD_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
 const GD_FOLDER = 'application/vnd.google-apps.folder';
 const GD_SHORT = 'application/vnd.google-apps.shortcut';
 const GD_DOC = 'application/vnd.google-apps.document';
-const GD = { token: null, exp: 0, pending: null, timer: null };
+const GD = { token: null, exp: 0, pending: null, timer: null, dead: false };
 try { const t = JSON.parse(sessionStorage.getItem('console-gtoken') || 'null'); if (t && t.exp > Date.now()) { GD.token = t.token; GD.exp = t.exp; } } catch (e) { /* no saved token */ }
 const gdClientId = () => lsGet('console-gclient', '');
 const gdValid = () => !!GD.token && Date.now() < GD.exp;
@@ -1972,7 +1974,7 @@ function pushToken() {
 async function onSwMsg(e) {
   const d = e.data || {};
   if (d.type !== 'need-token' || !e.ports[0]) return;
-  try { if (d.force || !gdValid()) await gdToken(false); } catch (err) { toast('Google session expired. Press Refresh to sign in again.'); }
+  try { if (!GD.dead && (d.force || !gdValid())) await gdToken(false); } catch (err) { showReconnect(); }
   e.ports[0].postMessage({ token: GD.token, exp: GD.exp, api: GD_API });
 }
 let swReady = null;
@@ -1982,9 +1984,11 @@ function ensureSW() {
   if (swReady) return swReady;
   swReady = (async () => {
     navigator.serviceWorker.addEventListener('message', onSwMsg);
-    await navigator.serviceWorker.register('sw.js');
+    const reg = await navigator.serviceWorker.register('sw.js');
     await navigator.serviceWorker.ready;
     if (!navigator.serviceWorker.controller) {
+      /* a hard reload (Ctrl+F5) leaves the page without a controller: ask the worker to take it over */
+      try { const w = reg.active || (await navigator.serviceWorker.ready).active; if (w) w.postMessage({ type: 'claim' }); } catch (e) { /* ignore */ }
       await new Promise((res) => { navigator.serviceWorker.addEventListener('controllerchange', res, { once: true }); setTimeout(res, 3000); });
     }
     if (!navigator.serviceWorker.controller) throw new Error('Reload the page once (press F5) and try again');
@@ -1994,21 +1998,36 @@ function ensureSW() {
   return swReady;
 }
 
+let gisP = null;
 function loadGIS() {
-  return new Promise((res, rej) => {
-    if (window.google && google.accounts && google.accounts.oauth2) { res(); return; }
+  if (window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
+  if (gisP) return gisP;
+  gisP = new Promise((res, rej) => {
     const s = document.createElement('script');
+    const to = setTimeout(() => { s.remove(); rej(new Error('Google sign-in did not load. Check your connection and try again')); }, 12000);
     s.src = 'https://accounts.google.com/gsi/client';
-    s.onload = () => res();
-    s.onerror = () => rej(new Error('Could not load Google sign-in'));
+    s.onload = () => { clearTimeout(to); res(); };
+    s.onerror = () => { clearTimeout(to); s.remove(); rej(new Error('Could not load Google sign-in. Check your connection or ad blocker')); };
     document.head.appendChild(s);
   });
+  gisP.catch(() => { gisP = null; });
+  return gisP;
 }
 function gdSchedule() {
   clearTimeout(GD.timer);
   GD.timer = setTimeout(() => { gdToken(false).catch(() => {}); }, Math.max(30000, GD.exp - Date.now() - 120000));
 }
-/* interactive = true may show the Google sign-in window, so call it from a click */
+const GD_ERR = {
+  popup_closed: 'The Google window was closed before signing in',
+  popup_failed_to_open: 'The Google window was blocked. Allow pop-ups for this site and press Connect again',
+  access_denied: 'Google access was denied. Add your account as a test user or publish the app',
+  interaction_required: 'Google needs you to sign in again',
+  immediate_failed: 'Google needs you to sign in again',
+  invalid_client: 'Google rejected the Client ID. Check that it is copied exactly'
+};
+const gdMsg = (k, fallback) => GD_ERR[k] || fallback || 'Google sign-in failed';
+/* interactive = true opens the Google window and must be called straight from a click.
+   Without a click the browser blocks that window, so a quiet attempt gets a short time limit instead of hanging. */
 function gdToken(interactive) {
   if (GD.pending) return GD.pending;
   const p = (async () => {
@@ -2016,35 +2035,57 @@ function gdToken(interactive) {
     if (!cid) throw new Error('Add your Google Client ID first');
     await loadGIS();
     return new Promise((resolve, reject) => {
-      const tc = google.accounts.oauth2.initTokenClient({
-        client_id: cid,
-        scope: GD_SCOPE,
-        callback: (r) => {
-          if (r && r.access_token) {
-            GD.token = r.access_token;
-            GD.exp = Date.now() + Math.max(60, (r.expires_in || 3600) - 90) * 1000;
-            try { sessionStorage.setItem('console-gtoken', JSON.stringify({ token: GD.token, exp: GD.exp })); } catch (e) { /* ignore */ }
-            pushToken();
-            gdSchedule();
-            resolve(GD.token);
-          } else reject(new Error((r && (r.error_description || r.error)) || 'Sign-in failed'));
-        },
-        error_callback: (e) => reject(new Error((e && e.type) || 'Sign-in was cancelled'))
-      });
-      tc.requestAccessToken({ prompt: interactive ? '' : 'none' });
+      let done = false;
+      const fin = (fn, v) => { if (done) return; done = true; clearTimeout(to); fn(v); };
+      const to = setTimeout(() => fin(reject, Object.assign(new Error(interactive ? 'Google did not answer. Try again' : 'Google sign-in needs a click'), { quiet: !interactive })), interactive ? 180000 : 4000);
+      try {
+        const tc = google.accounts.oauth2.initTokenClient({
+          client_id: cid,
+          scope: GD_SCOPE,
+          callback: (r) => {
+            if (r && r.access_token) {
+              GD.token = r.access_token; GD.dead = false;
+              GD.exp = Date.now() + Math.max(60, (r.expires_in || 3600) - 90) * 1000;
+              try { sessionStorage.setItem('console-gtoken', JSON.stringify({ token: GD.token, exp: GD.exp })); } catch (e) { /* ignore */ }
+              pushToken();
+              gdSchedule();
+              hideReconnect();
+              fin(resolve, GD.token);
+            } else fin(reject, new Error(gdMsg(r && r.error, r && (r.error_description || r.error))));
+          },
+          error_callback: (e) => fin(reject, new Error(gdMsg(e && e.type)))
+        });
+        tc.requestAccessToken({ prompt: interactive ? '' : 'none' });
+      } catch (e) { fin(reject, e); }
     });
   })();
   GD.pending = p;
   p.then(() => { GD.pending = null; }, () => { GD.pending = null; });
   return p;
 }
+/* small button shown when the Google session ran out and could not be renewed quietly */
+function showReconnect() {
+  GD.dead = true;
+  if ($('#gdBar')) return;
+  const b = document.createElement('button');
+  b.id = 'gdBar'; b.type = 'button'; b.className = 'gdbar';
+  b.innerHTML = '<i class="fa-brands fa-google-drive"></i><span>Google session ended. Tap to reconnect</span>';
+  b.addEventListener('click', async () => {
+    b.disabled = true;
+    try { await gdToken(true); location.reload(); }
+    catch (e) { toast(e.message || 'Could not reconnect'); b.disabled = false; }
+  });
+  document.body.appendChild(b);
+}
+function hideReconnect() { const b = $('#gdBar'); if (b) b.remove(); }
 async function gdFetch(url, opts, retry = true) {
   opts = opts || {};
   if (!gdValid()) {
-    try { await gdToken(false); } catch (e) { throw new Error('Google session expired. Press Refresh to sign in again.'); }
+    if (GD.dead) throw new Error('Google session ended');
+    try { await gdToken(false); } catch (e) { showReconnect(); throw new Error('Google session ended'); }
   }
   const r = await fetch(url, Object.assign({}, opts, { headers: Object.assign({}, opts.headers || {}, { Authorization: 'Bearer ' + GD.token }) }));
-  if (r.status === 401 && retry) { GD.token = null; return gdFetch(url, opts, false); }
+  if (r.status === 401 && retry) { GD.token = null; try { sessionStorage.removeItem('console-gtoken'); } catch (e) { /* ignore */ } return gdFetch(url, opts, false); }
   if (!r.ok && r.status !== 206) { const e = new Error(r.status === 404 ? 'Folder not found or no access' : 'Google Drive error ' + r.status); e.status = r.status; throw e; }
   return r;
 }
@@ -2136,30 +2177,39 @@ function gdFolderId(s) {
 /* After an instant open from the cache, quietly check Drive and redraw only if something changed */
 async function refreshDriveInBackground(id, cached) {
   try {
-    if (!gdValid()) await gdToken(false);
+    if (!gdValid()) { if (GD.dead) return; await gdToken(false); }
     pushToken();
     const entries = await gdWalk(id, () => {});
     if (S.source !== 'drive' || !S.drive || S.drive.id !== id) return;
     if (gdSig(entries) === cached.sig) return;
     await idb.set('dlist:' + id, { name: cached.name, sig: gdSig(entries), entries: gdPack(entries) });
     await loadVault(entries, cached.name, 'g:' + id);
-  } catch (e) { /* offline or signed out: the cached view stays */ }
+  } catch (e) { if (!gdValid()) showReconnect(); /* offline or signed out: the cached view stays */ }
 }
 async function openDrive(id, interactive, quiet, fresh) {
+  /* the Google window must open straight from the click, before any waiting */
+  let tokP = null;
+  if (interactive && !gdValid()) { tokP = gdToken(true); tokP.catch(() => {}); }
   setScanning(true, 'Connecting to Google Drive…');
+  const dog = setTimeout(() => { if (S.scanning && !S.vault) { setScanning(false); if (isLocked()) openSourceDialog(true, 'This is taking too long. Check your connection and press Connect again'); } }, 60000);
   try {
+    if (tokP) await tokP;
     const cached = fresh ? null : await idb.get('dlist:' + id);
     if (cached && cached.entries && cached.entries.length) {
       setStatus('Opening your library…');
+      if (!gdValid() && !GD.dead) { try { await gdToken(false); } catch (e) { GD.dead = true; } }
       await ensureSW();
       S.handle = null; S.source = 'drive'; S.drive = { id, name: cached.name };
       lsSet('console-source', JSON.stringify({ type: 'drive', id, name: cached.name }));
       const entries = cached.entries.map((e) => ({ path: e.path, name: e.name, file: new DriveFile(e.m) }));
       await loadVault(entries, cached.name, 'g:' + id);
-      refreshDriveInBackground(id, cached);
+      if (GD.dead) showReconnect(); else refreshDriveInBackground(id, cached);
       return;
     }
-    if (!gdValid()) await gdToken(interactive);
+    if (!gdValid()) {
+      if (!interactive) throw Object.assign(new Error('Sign in to Google to open your library'), { needsClick: true });
+      await gdToken(true);
+    }
     await ensureSW();
     pushToken();
     setStatus('Reading Google Drive…');
@@ -2174,34 +2224,36 @@ async function openDrive(id, interactive, quiet, fresh) {
     console.error(e);
     setScanning(false);
     renderList();
-    if (!quiet) toast(e.message || 'Could not open Google Drive');
-    if (isLocked()) openSourceDialog(true);
+    const msg = e.message === 'Google session ended' ? 'Google session ended. Press Connect to sign in again' : (e.message || 'Could not open Google Drive');
+    if (isLocked()) openSourceDialog(true, (e.needsClick || (quiet && e.quiet)) ? 'Sign in to Google to open your library' : msg);
+    else if (!quiet) toast(msg);
     throw e;
-  }
+  } finally { clearTimeout(dog); }
 }
 
 /* ---- source dialog: This Computer / Google Drive ---- */
 function closeDialog() { const d = $('#dlg'); if (d) d.remove(); }
-function openSourceDialog(required) {
+function openSourceDialog(required, note) {
   closeDialog();
   const link = S.drive ? 'https://drive.google.com/drive/folders/' + S.drive.id : '';
   const d = document.createElement('div');
   d.className = 'dlg' + (required ? ' solid' : ''); d.id = 'dlg';
   if (required) d.dataset.req = '1';
   d.innerHTML = `<div class="dlg-box" role="dialog" aria-label="Choose Source">
-    <div class="dlg-h"><h3>Choose Source</h3>${required ? '' : '<button class="iconbtn sm" data-d="close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>'}</div>${required ? '<p class="dlg-sub">Where are your files? You can change this later.</p>' : ''}
+    ${required ? '<i class="fa-brands fa-pied-piper dlg-mark"></i>' : ''}
+    <div class="dlg-h"><div><h3>Choose Source</h3>${required ? '<p class="dlg-sub">Where are your files? You can change this later.</p>' : ''}</div>${required ? '' : '<button class="iconbtn sm" data-d="close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>'}</div>
     <div class="dlg-opts">
       <button class="ghost" data-d="local"><i class="fa-solid fa-computer"></i>This Computer</button>
-      <button class="ghost ${S.source === 'drive' ? 'on' : ''}" data-d="drive"><i class="fa-brands fa-google-drive"></i>Google Drive</button>
+      <button class="ghost ${S.source === 'drive' || gdClientId() ? 'on' : ''}" data-d="drive"><i class="fa-brands fa-google-drive"></i>Google Drive</button>
     </div>
     <div class="dlg-drive" id="dgForm" ${S.source === 'drive' || gdClientId() ? '' : 'hidden'}>
-      <label>Folder link<input id="dgLink" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://drive.google.com/drive/folders/…" value="${esc(link)}" autocomplete="off"></label>
+      <label>Folder Link<input id="dgLink" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://drive.google.com/drive/folders/…" value="${esc(link)}" autocomplete="off"></label>
       <label>OAuth Client ID<input id="dgClient" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="123456789-abc.apps.googleusercontent.com" value="${esc(gdClientId())}" autocomplete="off"></label>
-      <p>The console only reads your files (read-only access). The setup steps are in README.txt.</p>
+      <p class="dlg-hint">The console only reads your files (read-only access).</p>
+      <p class="auth-err" id="dgErr" ${note ? '' : 'hidden'}>${esc(note || '')}</p>
       <button class="primary" data-d="connect"><i class="fa-brands fa-google-drive"></i>Connect</button>
-      <button class="ghost" data-d="share"><i class="fa-solid fa-link"></i>Copy setup link for another device</button>
     </div>
-    ${required && S.saved ? `<button class="ghost" data-d="resume"><i class="fa-solid fa-clock-rotate-left"></i>Continue: ${esc(S.saved.name)}</button>` : ''}
+    ${required && S.saved ? `<button class="linkbtn" data-d="resume"><i class="fa-solid fa-clock-rotate-left"></i>Continue: ${esc(S.saved.name)}</button>` : ''}
   </div>`;
   document.body.appendChild(d);
   d.addEventListener('click', (e) => {
@@ -2220,19 +2272,13 @@ function openSourceDialog(required) {
       continueSaved().then(() => { if (isLocked() && !S.vault) openSourceDialog(true); });
     }
     else if (act === 'drive') { $('#dgForm').hidden = false; loadGIS().catch(() => {}); $('#dgLink').focus(); }
-    else if (act === 'share') {
-      const cid = $('#dgClient').value.trim().replace(/\s+/g, '');
-      const id = gdFolderId($('#dgLink').value);
-      if (!cid || !id) { toast('Fill in the folder link and Client ID first'); return; }
-      const url = location.origin + location.pathname + '#setup=' + btoa(JSON.stringify({ c: cid, f: id }));
-      (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => toast('Setup link copied. Open it on the other device'), () => { window.prompt('Copy this link:', url); });
-    }
     else if (act === 'connect') {
       const cid = $('#dgClient').value.trim().replace(/\s+/g, '').replace(/[\u200b-\u200d\ufeff]/g, '');
       const id = gdFolderId($('#dgLink').value);
       if (!cid) { toast('Paste your OAuth Client ID'); return; }
       if (!id) { toast('Paste the link of a Google Drive folder'); return; }
       lsSet('console-gclient', cid);
+      b.disabled = true;
       closeDialog();
       openDrive(id, true).catch(() => {});
     }
@@ -2277,32 +2323,34 @@ function applyProfile() {
   const lo = $('#logoutBtn');
   if (lo && S.user) lo.title = 'Sign out @' + S.user.nick;
 }
-/* the nickname always starts with @, any letter case */
-function fixNick(inp) { inp.value = inp.value.replace(/[@\s]+/g, ''); }
+/* the field shows @ only while there is something typed; the saved nickname never contains it */
+const nickVal = (inp) => inp.value.replace(/[@\s]+/g, '');
+function fixNick(inp) { const v = nickVal(inp), nv = v ? '@' + v : ''; if (inp.value !== nv) inp.value = nv; }
 function showAuth() {
   return new Promise((resolve) => {
     closeDialog();
     const hasUsers = getUsers().length > 0;
     const d = document.createElement('div');
     d.className = 'dlg solid'; d.id = 'dlg'; d.dataset.req = '1';
-    let mode = hasUsers ? 'in' : 'up';
+    let mode = 'in';
     const chk = (id, text, on) => `<label class="chk"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><span>${text}</span></label>`;
     const render = () => {
       d.innerHTML = `<div class="dlg-box" role="dialog" aria-label="Account">
-        <div class="dlg-h"><h3>${mode === 'in' ? 'Welcome Back' : 'Create Your Profile'}</h3></div>
-        <div class="dlg-opts">
-          <button class="ghost ${mode === 'in' ? 'on' : ''}" data-m="in" type="button"><i class="fa-solid fa-right-to-bracket"></i>Sign In</button>
-          <button class="ghost ${mode === 'up' ? 'on' : ''}" data-m="up" type="button"><i class="fa-solid fa-user-plus"></i>Create Account</button>
+        <i class="fa-brands fa-pied-piper dlg-mark"></i>
+        <div class="dlg-h"><div><h3>${mode === 'in' ? 'Welcome Back' : 'Create Your Profile'}</h3><p class="dlg-sub">${mode === 'in' ? 'Sign in to open your console.' : 'Stored only on this device.'}</p></div></div>
+        <div class="atabs" role="tablist">
+          <button class="${mode === 'in' ? 'on' : ''}" data-m="in" type="button" role="tab">Sign In</button>
+          <button class="${mode === 'up' ? 'on' : ''}" data-m="up" type="button" role="tab">Create Account</button>
         </div>
         <form class="dlg-drive" id="authForm" novalidate>
           ${mode === 'up' ? `<div class="two"><label>First Name<input id="aFirst" type="text" autocomplete="given-name" maxlength="40"></label><label>Last Name<input id="aLast" type="text" autocomplete="family-name" maxlength="40"></label></div>` : ''}
-          <label>Nickname<span class="nick"><b>@</b><input id="aNick" type="text" placeholder="nickname" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="24"></span></label>
-          ${mode === 'up' ? chk('aPref', 'Prefer nickname over name', false) : ''}
+          <label>Nickname<input id="aNick" type="text" placeholder="@nickname" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="25"></label>
+          ${mode === 'up' ? chk('aPref', 'Prefer Nickname Over Name', false) : ''}
           <label>Password<input id="aPass" type="password" autocomplete="${mode === 'up' ? 'new-password' : 'current-password'}"></label>
           ${mode === 'up' ? '<label>Confirm Password<input id="aPass2" type="password" autocomplete="new-password"></label>' : ''}
-          ${chk('aRem', 'Remember me on this device', true)}
+          ${chk('aRem', 'Remember Me', true)}
           <p class="auth-err" id="authErr" hidden></p>
-          <button class="primary" type="submit" id="authGo"><i class="fa-solid ${mode === 'in' ? 'fa-right-to-bracket' : 'fa-user-plus'}"></i>${mode === 'in' ? 'Sign In' : 'Create Account'}</button>
+          <button class="primary" type="submit" id="authGo">${mode === 'in' ? 'Sign In' : 'Create Account'}</button>
         </form>
       </div>`;
       const nick = $('#aNick');
@@ -2317,7 +2365,7 @@ function showAuth() {
     d.addEventListener('submit', async (e) => {
       e.preventDefault();
       const go = $('#authGo');
-      const nick = $('#aNick').value.trim(), pass = $('#aPass').value, rem = $('#aRem').checked;
+      const nick = nickVal($('#aNick')), pass = $('#aPass').value, rem = $('#aRem').checked;
       const users = getUsers();
       go.disabled = true;
       try {
