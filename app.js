@@ -706,8 +706,9 @@ async function loadVault(entries, name, key) {
   S.base.forEach((it) => { if (it.kind === 'audio' || it.kind === 'video') queueMeta(it); });
   setStatus('Loading covers and track info…');
   /* keep the preloader until covers and tags are in, so the page doesn't redraw after it opens */
-  const ready = Promise.all([preloadCovers(), loadAllTags()]).catch(() => {});
-  await Promise.race([ready, new Promise((r) => setTimeout(r, 12000))]);
+  const drv = S.source === 'drive';
+  const ready = Promise.all([preloadCovers(), loadAllTags(), drv ? waitMeta(30000) : null]).catch(() => {});
+  await Promise.race([ready, new Promise((r) => setTimeout(r, drv ? 32000 : 12000))]);
   renderAll();
   closeDialog();
   document.body.classList.remove('locked');
@@ -785,6 +786,20 @@ function queueMeta(it) {
   loadQ.push(it);
   pumpMeta();
 }
+/* first visit: wait until durations (and video stills) are read, so playing starts with full info */
+function waitMeta(cap) {
+  return new Promise((res) => {
+    const t0 = Date.now();
+    const total = S.base.filter((i) => (i.kind === 'audio' || i.kind === 'video') && i.metaState === 1).length;
+    const tick = () => {
+      const pend = S.base.filter((i) => (i.kind === 'audio' || i.kind === 'video') && i.metaState === 1).length;
+      if (!pend || Date.now() - t0 > cap) { res(); return; }
+      setStatus('Reading track info… ' + (total - pend) + ' / ' + total);
+      setTimeout(tick, 250);
+    };
+    tick();
+  });
+}
 /* ---- on-device cache for Drive: durations, video stills, tags ---- */
 function dinfoSave() {
   clearTimeout(dinfoSave.t);
@@ -816,7 +831,7 @@ function cropBars(cv, g) {
   return out;
 }
 function pumpMeta() {
-  while (loading < 4 && loadQ.length) {
+  while (loading < (S.source === 'drive' ? 8 : 4) && loadQ.length) {
     const it = loadQ.shift();
     loading++;
     const el = document.createElement(it.kind === 'video' ? 'video' : 'audio');
@@ -970,11 +985,14 @@ function scheduleHome() {
   clearTimeout(homeTimer);
   homeTimer = setTimeout(() => { if (S.section === 'home' && !S.query.trim()) renderList(); }, 400);
 }
+const HOME_RANK = new Map();
+const homeRank = (al) => { const k = al.title; if (!HOME_RANK.has(k)) HOME_RANK.set(k, Math.random()); return HOME_RANK.get(k); };
 function homeHtml() {
   const items = S.items.filter((i) => !i.hidden);
-  const albums = S.albums.slice().sort((x, y) => dateTs(getDate(x)) - dateTs(getDate(y)) || natural.compare(x.title, y.title));
+  /* a random order that is drawn once per page load and then stays, whatever dates arrive later */
+  const albums = S.albums.slice().sort((x, y) => homeRank(x) - homeRank(y));
   const coverOf = (al) => (al.cover ? `<img alt="" decoding="sync" src="${coverUrl(al.cover)}">` : '<i class="fa-solid fa-compact-disc"></i>');
-  const grid = albums.slice(-12).map((al) => `<button class="alb" data-open="${al.uid}"><span class="cv">${coverOf(al)}</span><b>${esc(al.title)}</b><small>${esc(monthYear(getDate(al)))}</small></button>`).join('');
+  const grid = albums.slice(0, 12).map((al) => `<button class="alb" data-open="${al.uid}"><span class="cv">${coverOf(al)}</span><b>${esc(al.title)}</b><small>${esc(monthYear(getDate(al)))}</small></button>`).join('');
   const recent = items.filter((i) => !(i.kind === 'audio' && i.section === 'disc')).sort((x, y) => y.modified - x.modified).slice(0, 40);
   const KIND_LABEL = { lyrics: 'Lyrics', demo: 'Demo', disc: 'Track', docs: 'Document', n_docs: 'Document', video: 'Video', n_video: 'Video', lyricvideo: 'Lyric Video', n_notes: 'Note', n_bib: 'Novel' };
   const row = (it) => {
