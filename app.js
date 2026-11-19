@@ -2055,7 +2055,7 @@ function gdToken(interactive) {
           },
           error_callback: (e) => fin(reject, new Error(gdMsg(e && e.type)))
         });
-        tc.requestAccessToken({ prompt: interactive ? '' : 'none' });
+        tc.requestAccessToken(interactive === 'pick' ? { prompt: 'select_account' } : Object.assign({ prompt: interactive ? '' : 'none' }, lsGet('console-gmail', '') ? { hint: lsGet('console-gmail', '') } : {}));
       } catch (e) { fin(reject, e); }
     });
   })();
@@ -2185,6 +2185,17 @@ function gdFolderId(s) {
   if (m) return m[1];
   return /^[\w-]{10,}$/.test(s) ? s : '';
 }
+/* explains an empty result: which Google account is signed in and what Drive returned for the folder */
+async function gdWhyEmpty(id) {
+  let who = '', info = '';
+  try { const u = (await (await gdFetch(GD_API + '/drive/v3/about?fields=user(emailAddress)')).json()).user; if (u && u.emailAddress) { who = u.emailAddress; lsSet('console-gmail', who); } } catch (e) { /* ignore */ }
+  try {
+    const items = await gdListOnce([id]);
+    const f = items.filter((m) => m.mimeType === GD_FOLDER).length;
+    info = items.length ? 'The folder has ' + items.length + ' items (' + f + ' folders), but none are music, video or text files the console can read.' : 'Drive shows this folder as empty for this account.';
+  } catch (e) { info = 'Could not read the folder.'; }
+  return (who ? 'Signed in as ' + who + '. ' : '') + info + ' If this is the wrong account, press Connect and choose another.';
+}
 /* After an instant open from the cache, quietly check Drive and redraw only if something changed */
 async function refreshDriveInBackground(id, cached) {
   try {
@@ -2200,7 +2211,8 @@ async function refreshDriveInBackground(id, cached) {
 async function openDrive(id, interactive, quiet, fresh) {
   /* the Google window must open straight from the click, before any waiting */
   let tokP = null;
-  if (interactive && !gdValid()) { tokP = gdToken(true); tokP.catch(() => {}); }
+  if (interactive === 'pick') { GD.token = null; GD.dead = false; try { sessionStorage.removeItem('console-gtoken'); } catch (e) { /* ignore */ } }
+  if (interactive && !gdValid()) { tokP = gdToken(interactive); tokP.catch(() => {}); }
   setScanning(true, 'Connecting to Google Drive…');
   const dog = setTimeout(() => { if (S.scanning && !S.vault) { setScanning(false); if (isLocked()) openSourceDialog(true, 'This is taking too long. Check your connection and press Connect again'); } }, 60000);
   try {
@@ -2219,7 +2231,7 @@ async function openDrive(id, interactive, quiet, fresh) {
     }
     if (!gdValid()) {
       if (!interactive) throw Object.assign(new Error('Sign in to Google to open your library'), { needsClick: true });
-      await gdToken(true);
+      await gdToken(interactive);
     }
     await ensureSW();
     pushToken();
@@ -2227,8 +2239,9 @@ async function openDrive(id, interactive, quiet, fresh) {
     const meta = await (await gdFetch(GD_API + '/drive/v3/files/' + id + '?fields=name,mimeType&supportsAllDrives=true')).json();
     if (meta.mimeType !== GD_FOLDER) throw new Error('That link is not a folder');
     const entries = await gdWalk(id, () => {});
-    if (!entries.length) throw new Error('No files found in this folder. Check the link and that this Google account can open it');
+    if (!entries.length) throw new Error(await gdWhyEmpty(id));
     S.handle = null; S.source = 'drive'; S.drive = { id, name: meta.name };
+    gdFetch(GD_API + '/drive/v3/about?fields=user(emailAddress)').then((r) => r.json()).then((j) => { if (j.user && j.user.emailAddress) lsSet('console-gmail', j.user.emailAddress); }).catch(() => {});
     lsSet('console-source', JSON.stringify({ type: 'drive', id, name: meta.name }));
     idb.set('dlist:' + id, { name: meta.name, sig: gdSig(entries), entries: gdPack(entries) });
     await loadVault(entries, meta.name, 'g:' + id);
@@ -2292,7 +2305,7 @@ function openSourceDialog(required, note) {
       lsSet('console-gclient', cid);
       b.disabled = true;
       closeDialog();
-      openDrive(id, true).catch(() => {});
+      openDrive(id, 'pick').catch(() => {});
     }
   });
   if (!$('#dgForm').hidden) loadGIS().catch(() => {});
