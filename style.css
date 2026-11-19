@@ -567,3 +567,8 @@ body.no-detail .detail{display:none}
 .gdbar:disabled{opacity:.6}
 .gdbar span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dlg.solid .dlg-box{animation:rise .45s ease both}
+/* sliding extra fields */
+.dlg-drive .xtra{display:grid;grid-template-rows:0fr;opacity:0;margin-top:-14px;transition:grid-template-rows .38s cubic-bezier(.4,0,.2,1),opacity .28s ease,margin-top .38s cubic-bezier(.4,0,.2,1)}
+.dlg-drive .xtra>*{min-height:0;overflow:hidden}
+.dlg-drive .xtra.open{grid-template-rows:1fr;opacity:1;margin-top:0}
+.dlg-drive .xtra .two{padding-bottom:0}

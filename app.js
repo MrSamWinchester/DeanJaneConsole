@@ -2116,7 +2116,7 @@ class DriveFile {
 DriveFile.prototype.remote = true;
 
 /* lists the children of several folders in one request (much faster than one request per folder) */
-async function gdListMany(ids) {
+async function gdListOnce(ids) {
   const out = [];
   let page = '';
   const q = encodeURIComponent('(' + ids.map((i) => "'" + i + "' in parents").join(' or ') + ') and trashed=false');
@@ -2127,6 +2127,17 @@ async function gdListMany(ids) {
     out.push(...(j.files || []));
     page = j.nextPageToken || '';
   } while (page);
+  return out;
+}
+/* Google sometimes leaves out "parents" for folders shared with you; then ask one folder at a time so the parent is known */
+async function gdListMany(ids) {
+  const out = await gdListOnce(ids);
+  if (ids.length > 1 && out.some((m) => !(m.parents && m.parents.length))) {
+    const all = [];
+    for (const id of ids) for (const m of await gdListOnce([id])) all.push(Object.assign({}, m, { parents: [id] }));
+    return all;
+  }
+  if (ids.length === 1) out.forEach((m) => { if (!(m.parents && m.parents.length)) m.parents = [ids[0]]; });
   return out;
 }
 async function gdWalk(rootId, onCount) {
@@ -2216,6 +2227,7 @@ async function openDrive(id, interactive, quiet, fresh) {
     const meta = await (await gdFetch(GD_API + '/drive/v3/files/' + id + '?fields=name,mimeType&supportsAllDrives=true')).json();
     if (meta.mimeType !== GD_FOLDER) throw new Error('That link is not a folder');
     const entries = await gdWalk(id, () => {});
+    if (!entries.length) throw new Error('No files found in this folder. Check the link and that this Google account can open it');
     S.handle = null; S.source = 'drive'; S.drive = { id, name: meta.name };
     lsSet('console-source', JSON.stringify({ type: 'drive', id, name: meta.name }));
     idb.set('dlist:' + id, { name: meta.name, sig: gdSig(entries), entries: gdPack(entries) });
@@ -2334,33 +2346,44 @@ function showAuth() {
     d.className = 'dlg solid'; d.id = 'dlg'; d.dataset.req = '1';
     let mode = 'in';
     const chk = (id, text, on) => `<label class="chk"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><span>${text}</span></label>`;
-    const render = () => {
+    /* built once: switching tabs slides the extra fields open or closed instead of redrawing */
+    const build = () => {
       d.innerHTML = `<div class="dlg-box" role="dialog" aria-label="Account">
         <i class="fa-brands fa-pied-piper dlg-mark"></i>
-        <div class="dlg-h"><div><h3>${mode === 'in' ? 'Welcome Back' : 'Create Your Profile'}</h3><p class="dlg-sub">${mode === 'in' ? 'Sign in to open your console.' : 'Stored only on this device.'}</p></div></div>
+        <div class="dlg-h"><div><h3 id="aTitle"></h3><p class="dlg-sub" id="aSub"></p></div></div>
         <div class="atabs" role="tablist">
-          <button class="${mode === 'in' ? 'on' : ''}" data-m="in" type="button" role="tab">Sign In</button>
-          <button class="${mode === 'up' ? 'on' : ''}" data-m="up" type="button" role="tab">Create Account</button>
+          <button data-m="in" type="button" role="tab">Sign In</button>
+          <button data-m="up" type="button" role="tab">Create Account</button>
         </div>
         <form class="dlg-drive" id="authForm" novalidate>
-          ${mode === 'up' ? `<div class="two"><label>First Name<input id="aFirst" type="text" autocomplete="given-name" maxlength="40"></label><label>Last Name<input id="aLast" type="text" autocomplete="family-name" maxlength="40"></label></div>` : ''}
-          <label>Nickname<input id="aNick" type="text" placeholder="@nickname" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="25"></label>
-          ${mode === 'up' ? chk('aPref', 'Prefer Nickname Over Name', false) : ''}
-          <label>Password<input id="aPass" type="password" autocomplete="${mode === 'up' ? 'new-password' : 'current-password'}"></label>
-          ${mode === 'up' ? '<label>Confirm Password<input id="aPass2" type="password" autocomplete="new-password"></label>' : ''}
+          <div class="xtra"><div class="two"><label>First Name<input id="aFirst" type="text" placeholder="Dean" autocomplete="given-name" maxlength="40"></label><label>Last Name<input id="aLast" type="text" placeholder="Jane" autocomplete="family-name" maxlength="40"></label></div></div>
+          <label>Nickname<input id="aNick" type="text" placeholder="@DeanJane" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="25"></label>
+          <label>Password<input id="aPass" type="password" autocomplete="current-password"></label>
+          <div class="xtra"><div><label>Confirm Password<input id="aPass2" type="password" autocomplete="new-password"></label></div></div>
           ${chk('aRem', 'Remember Me', true)}
           <p class="auth-err" id="authErr" hidden></p>
-          <button class="primary" type="submit" id="authGo">${mode === 'in' ? 'Sign In' : 'Create Account'}</button>
+          <button class="primary" type="submit" id="authGo"></button>
         </form>
       </div>`;
       const nick = $('#aNick');
       nick.addEventListener('input', () => fixNick(nick));
-      (mode === 'up' ? $('#aFirst') : nick).focus();
+    };
+    const setMode = (m, first) => {
+      mode = m;
+      const up = m === 'up';
+      $('#aTitle').textContent = up ? 'Create Your Profile' : 'Welcome Back';
+      $('#aSub').textContent = up ? 'Stored only on this device.' : 'Sign in to open your console.';
+      d.querySelectorAll('.atabs button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
+      d.querySelectorAll('.xtra').forEach((x) => { x.classList.toggle('open', up); if (up) x.removeAttribute('inert'); else x.setAttribute('inert', ''); });
+      $('#aPass').autocomplete = up ? 'new-password' : 'current-password';
+      $('#authGo').textContent = up ? 'Create Account' : 'Sign In';
+      const e = $('#authErr'); e.hidden = true;
+      if (first || !up) $('#aNick').focus(); else $('#aFirst').focus();
     };
     const err = (m) => { const e = $('#authErr'); e.textContent = m; e.hidden = !m; };
     d.addEventListener('click', (e) => {
       const b = e.target.closest('[data-m]');
-      if (b && b.dataset.m !== mode) { mode = b.dataset.m; render(); }
+      if (b && b.dataset.m !== mode) setMode(b.dataset.m);
     });
     d.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -2384,7 +2407,7 @@ function showAuth() {
         if (pass.length < 6) throw new Error('Password must be at least 6 characters');
         if (pass !== pass2) throw new Error('Passwords do not match');
         const salt = b64(crypto.getRandomValues(new Uint8Array(16)));
-        const u = { id: 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), first, last, nick, preferNick: $('#aPref').checked, salt, hash: await hashPw(pass, salt), created: Date.now() };
+        const u = { id: 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), first, last, nick, preferNick: false, salt, hash: await hashPw(pass, salt), created: Date.now() };
         users.push(u); saveUsers(users);
         rememberSession(u, rem);
         d.remove(); resolve(u);
@@ -2394,7 +2417,8 @@ function showAuth() {
       }
     });
     document.body.appendChild(d);
-    render();
+    build();
+    setMode('in', true);
   });
 }
 
