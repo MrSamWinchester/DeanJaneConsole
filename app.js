@@ -128,7 +128,7 @@ const WIDE_SECS = new Set(['docs', 'n_docs', 'n_notes', 'n_bib']); /* these read
    Everything else (Home, Demos, Discography, Videos...) uses the default 410px,
    which lives in style.css in the .app rule: var(--detail-w,410px). */
 const HOME_DETAIL_MIN = 1700; /* the empty details panel is shown on Home only in windows at least this wide (px) */
-const DETAIL_W = { lyrics: 499, docs: 929, n_docs: 929, n_notes: 914, n_bib: 949 };
+const DETAIL_W = { lyrics: 499, docs: 949, n_docs: 949, n_notes: 949, n_bib: 949 };
 
 /* folder-name rules (Russian and English names both work) */
 const SEP = '(^|[^a-zа-яё0-9])';
