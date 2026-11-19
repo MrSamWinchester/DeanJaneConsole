@@ -166,14 +166,6 @@ body.dragging .list{outline:2px dashed var(--line2);outline-offset:-6px;border-r
 .p-seek span{width:38px;flex:0 0 auto}
 .p-seek span:first-child{text-align:right}
 .p-right{flex:0 0 auto;display:flex;align-items:center;gap:6px}
-.p-right input[type=range]{width:72px;flex:0 0 auto;transition:width .15s,opacity .15s}
-@container (max-width:600px){
-  .p-cover{display:none}
-  .p-left{flex:0 1 110px}
-  .p-seek span:first-child{display:none}
-  .p-right input[type=range]{width:0;opacity:0}
-  .p-right:hover input[type=range]{width:64px;opacity:1}
-}
 
 /* ---------- range ---------- */
 input[type=range]{-webkit-appearance:none;appearance:none;height:4px;border-radius:4px;cursor:pointer;flex:1 1 auto;min-width:0;
@@ -464,13 +456,11 @@ input[type=range]::-moz-range-track{background:transparent}
 .intro #nav>*{animation:rise .5s ease backwards;animation-delay:calc(.18s + var(--d,0s))}
 .intro .list>:not(.home),.intro .list>.home>*{animation:rise .55s ease backwards;animation-delay:calc(.25s + var(--d,0s))}
 .list.swap>:not(.home),.list.swap>.home>*{animation:rise .4s ease backwards;animation-delay:var(--d,0s)}
-@media (prefers-reduced-motion:reduce){.intro *,.list.swap *{animation:none!important}}
 
 /* round 3: title joins the intro; slower, even wave for long lists */
 .intro .head{animation:rise .55s ease backwards;animation-delay:.2s}
 .intro .list>:not(.home),.intro .list>.home>*{animation-delay:calc(.28s + var(--d,0s))}
 .list.swap>:not(.home),.list.swap>.home>*{animation:rise .5s ease backwards;animation-delay:var(--d,0s)}
-@media (prefers-reduced-motion:reduce){.intro .head{animation:none!important}}
 .dlg-drive .ghost{align-self:flex-start;padding:10px 14px;font-size:13px}
 
 /* round 4: every list fades in as ONE block (like Videos), never row by row */
@@ -485,7 +475,6 @@ input[type=range]::-moz-range-track{background:transparent}
 .intro .side-foot{animation-delay:.3s}
 .intro .player{animation-delay:.36s}
 .list.swap{animation:rise .5s ease}
-@media (prefers-reduced-motion:reduce){.intro *,.list.swap{animation:none!important}}
 
 /* sign-in / create account, preloader status text, locked app */
 body.locked #app{visibility:hidden}
@@ -572,3 +561,51 @@ body.no-detail .detail{display:none}
 .dlg-drive .xtra>*{min-height:0;overflow:hidden}
 .dlg-drive .xtra.open{grid-template-rows:1fr;opacity:1;margin-top:0}
 .dlg-drive .xtra .two{padding-bottom:0}
+
+
+/* ===== round 7 ===== */
+/* preloader in the style of a system boot screen: logo, thin bar, one quiet line of text */
+.loader{flex-direction:column}
+.ld-box{display:flex;flex-direction:column;align-items:center;width:100%}
+.ld-logo{display:block;width:72px;height:auto;aspect-ratio:448/416;color:var(--text);margin-bottom:68px;animation:ldin .7s ease both}
+.ld-bar{width:176px;max-width:60vw;height:4px;border-radius:4px;background:var(--baroff);overflow:hidden}
+.ld-bar i{display:block;height:100%;width:0;border-radius:4px;background:var(--text);transition:width .4s ease-out}
+.loader .loader-msg{position:static;top:auto;bottom:auto;left:auto;right:auto;margin:22px 0 0;height:18px;max-width:90vw;font-size:12px;letter-spacing:.02em;color:var(--muted);white-space:nowrap;opacity:0;transition:opacity .38s ease}
+.loader .loader-msg.show{opacity:1}
+@keyframes ldin{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
+
+/* player: the seek bar always keeps a usable length; narrow players move it to its own row */
+.player{flex-wrap:wrap}
+.p-left{flex:1 1 160px;max-width:260px}
+.p-seek{flex:1 1 240px}
+.p-seek input[type=range]{min-width:90px}
+.p-vol{position:relative;display:flex}
+.p-pop{position:absolute;bottom:100%;left:50%;padding-bottom:10px;transform:translate(-50%,8px);opacity:0;visibility:hidden;z-index:40;transition:opacity .18s ease,transform .18s ease,visibility 0s .18s}
+.p-vol:hover .p-pop,.p-vol:focus-within .p-pop{opacity:1;visibility:visible;transform:translate(-50%,0);transition-delay:0s}
+.p-popbox{padding:14px 11px;border:1px solid var(--line2);border-radius:12px;background:var(--bg);box-shadow:var(--shadow)}
+.p-popbox input[type=range]{display:block;writing-mode:vertical-lr;direction:rtl;width:4px;height:92px;flex:none;min-width:0;background:linear-gradient(to top,var(--text) var(--p,0%),var(--baroff) var(--p,0%))}
+@container (max-width:760px){
+  .p-left{flex:1 1 0;max-width:none}
+  .p-seek{order:5;flex:1 1 100%}
+}
+@container (max-width:380px){.p-cover{display:none}}
+@media (hover:none){.p-pop{display:none}}
+
+/* sliding block (Drive fields) */
+.slide{display:grid;grid-template-rows:0fr;opacity:0;margin-top:-18px;transition:grid-template-rows .4s cubic-bezier(.4,0,.2,1),opacity .3s ease,margin-top .4s cubic-bezier(.4,0,.2,1)}
+.slide>*{min-height:0;overflow:hidden}
+.slide.open{grid-template-rows:1fr;opacity:1;margin-top:0}
+
+/* theme change: light spreads out of the button */
+::view-transition-old(root),::view-transition-new(root){animation:none;mix-blend-mode:normal}
+::view-transition-old(root){z-index:1}
+::view-transition-new(root){z-index:2}
+
+/* album captions never run into the next column */
+.alb{width:100%;min-width:0}
+.alb b,.alb small{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* engineering menu */
+.eng-list{display:flex;flex-direction:column;gap:8px}
+.eng-list .ghost{justify-content:flex-start;height:44px;padding:0 14px;gap:10px;border-radius:10px;font-size:13px}
+.eng-note{margin:0;font-size:12px;color:var(--muted)}

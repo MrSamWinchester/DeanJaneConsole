@@ -25,6 +25,8 @@ const dirOf = (p) => { const i = p.lastIndexOf('/'); return i < 0 ? '' : p.slice
 const has = (rx, s) => rx.test(s);
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
+/* set by the desktop app (preload.js); null in a normal browser */
+const DESK = window.desktop || null;
 
 /* dates are kept as 'YYYY', 'YYYY-MM' or 'YYYY-MM-DD' strings */
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -128,7 +130,7 @@ const WIDE_SECS = new Set(['docs', 'n_docs', 'n_notes', 'n_bib']); /* these read
    Everything else (Home, Demos, Discography, Videos...) uses the default 410px,
    which lives in style.css in the .app rule: var(--detail-w,410px). */
 const HOME_DETAIL_MIN = 1700; /* the empty details panel is shown on Home only in windows at least this wide (px) */
-const DETAIL_W = { lyrics: 499, docs: 949, n_docs: 949, n_notes: 949, n_bib: 949 };
+const DETAIL_W = { lyrics: 499, docs: 929, n_docs: 929, n_notes: 914, n_bib: 939 };
 
 /* folder-name rules (Russian and English names both work) */
 const SEP = '(^|[^a-zа-яё0-9])';
@@ -149,7 +151,7 @@ const RX = {
 
 /* ================= state ================= */
 const S = {
-  vault: false, handle: null, saved: null, name: '',
+  vault: false, handle: null, saved: null, desk: null, deskG: null, name: '',
   base: [], items: [], albums: [], byUid: new Map(), byPath: new Map(), uid: 1,
   idx: { byAlbumTitle: new Map(), byTitle: new Map() },
   section: 'home', query: '', sort: 'date',
@@ -627,7 +629,56 @@ async function walk(dir, prefix, out) {
   }
 }
 
+/* desktop app: a file of the chosen folder, read through the local server of the app (supports seeking) */
+const DESK_MIME = { mp3: 'audio/mpeg', wav: 'audio/wav', flac: 'audio/flac', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf', txt: 'text/plain', md: 'text/plain', lrc: 'text/plain' };
+class DeskFile {
+  constructor(base, e) {
+    this.base = base; this.rel = e.p;
+    this.name = e.p.slice(e.p.lastIndexOf('/') + 1);
+    this.size = e.s; this.lastModified = e.m;
+    this.type = DESK_MIME[extOf(this.name)] || '';
+  }
+  url() { return this.base + '/' + this.rel.split('/').map(encodeURIComponent).join('/'); }
+  async _get(range) {
+    const r = await fetch(this.url(), range ? { headers: { Range: range } } : {});
+    if (r.status === 416) return null;
+    if (!r.ok && r.status !== 206) throw new Error('Could not read ' + this.name);
+    return r;
+  }
+  async text() { return (await this._get()).text(); }
+  async arrayBuffer() { return (await this._get()).arrayBuffer(); }
+  slice(a, b) {
+    const self = this;
+    return { arrayBuffer: async () => { if (a >= self.size || b <= a) return new ArrayBuffer(0); const r = await self._get('bytes=' + a + '-' + (b - 1)); return r ? r.arrayBuffer() : new ArrayBuffer(0); } };
+  }
+}
+async function openDesk(dir) {
+  S.handle = null; S.drive = null; S.source = 'local'; S.desk = { path: dir };
+  setScanning(true, 'Reading folder…');
+  try {
+    const info = await DESK.info();
+    if (!info || !info.fileBase) throw new Error('The desktop app is not ready');
+    const r = await DESK.openFolder(dir);
+    if (!r || !r.ok) throw new Error((r && r.message) || 'Could not open the folder');
+    const entries = r.entries.map((e) => ({ path: e.p, name: e.p.slice(e.p.lastIndexOf('/') + 1), file: new DeskFile(info.fileBase, e) }));
+    lsSet('console-source', JSON.stringify({ type: 'desk', path: dir, name: r.name }));
+    await loadVault(entries, r.name, 'd:' + dir);
+  } catch (e) {
+    console.error(e);
+    setScanning(false);
+    renderList();
+    toast(e.message || 'Could not open the folder');
+    if (isLocked()) openSourceDialog(true);
+    throw e;
+  }
+}
+
 async function pickLocal() {
+  if (DESK) {
+    const r = await DESK.pickFolder();
+    if (!r || !r.path) return 'cancel';
+    try { await openDesk(r.path); return 'ok'; } catch (e) { return 'cancel'; }
+  }
   if (window.showDirectoryPicker) {
     try {
       const h = await window.showDirectoryPicker({ mode: 'read' });
@@ -645,7 +696,7 @@ async function pickLocal() {
 }
 
 async function openHandle(h) {
-  S.handle = h;
+  S.handle = h; S.desk = null;
   S.source = 'local'; S.drive = null;
   lsSet('console-source', '{"type":"local"}');
   setScanning(true, 'Reading folder…');
@@ -717,20 +768,82 @@ async function loadVault(entries, name, key) {
 }
 
 const isLocked = () => document.body.classList.contains('locked');
-function setStatus(msg) {
+/* ---- preloader: logo, a thin bar and a changing line of text.
+   The lines are only for atmosphere (not real status): no dots, no counters. */
+const LD_TEXTS = [
+  'Tuning the guitars', 'Sharpening the pencils', 'Dusting off the old demos', 'Untangling the cables', 'Finding the right key',
+  'Counting the bars', 'Warming up the amps', 'Sorting the setlist', 'Reading between the lines', 'Rewinding the tape',
+  'Straightening the album covers', 'Hunting for lost lyrics', 'Polishing the chorus', 'Checking the metronome', 'Tidying the studio',
+  'Waking up the speakers', 'Finding the downbeat', 'Adding a little reverb', 'Labeling the tapes', 'Stacking the records',
+  'Turning the pages', 'Humming the melody', 'Setting up the microphones', 'Sharpening the harmonies', 'Warming up the vocal booth',
+  'Dimming the lights', 'Folding the setlists', 'Rehearsing the bridge', 'Listening for the hook', 'Opening the notebooks'
+];
+const LD = { on: false, long: false, p: 0, t0: 0, iv: 0, rot: 0, i: 0, order: [], sticky: '', hideT: 0 };
+function ldFill(w, instant) {
+  const f = $('#ldFill');
+  if (!f) return;
+  if (instant) { f.style.transition = 'none'; f.style.width = w + '%'; void f.offsetWidth; f.style.transition = ''; } else f.style.width = w + '%';
+}
+function ldShowText() {
   const m = $('#loaderMsg');
   if (!m) return;
-  m.textContent = msg || '';
-  $('#loader').classList.toggle('has-msg', !!msg);
+  m.classList.remove('show');
+  setTimeout(() => {
+    if (!LD.on) return;
+    m.textContent = LD.sticky || LD.order[LD.i++ % LD.order.length];
+    m.classList.add('show');
+  }, 400);
+}
+function ldStart(long) {
+  if (LD.hideT) LD.on = false; /* it was just finishing: start over */
+  clearTimeout(LD.hideT); LD.hideT = 0;
+  if (long && !LD.long) {
+    LD.long = true;
+    LD.order = LD_TEXTS.slice().sort(() => Math.random() - 0.5); LD.i = 0;
+    if (LD.on) { clearInterval(LD.rot); ldShowText(); LD.rot = setInterval(ldShowText, 2900); }
+  }
+  if (LD.on) return;
+  LD.on = true; LD.p = 0; LD.t0 = performance.now();
+  ldFill(0, true);
+  clearInterval(LD.iv);
+  LD.iv = setInterval(() => {
+    const dt = performance.now() - LD.t0;
+    LD.p = Math.max(LD.p, 94 * (1 - Math.exp(-dt / (LD.long ? 7000 : 800))));
+    ldFill(LD.p.toFixed(1));
+  }, 140);
+  if (LD.long) { ldShowText(); clearInterval(LD.rot); LD.rot = setInterval(ldShowText, 2900); }
+}
+function ldFinish(done) {
+  clearInterval(LD.iv); clearInterval(LD.rot);
+  ldFill(100);
+  LD.hideT = setTimeout(() => {
+    LD.hideT = 0; LD.on = false; LD.long = false; LD.sticky = '';
+    const m = $('#loaderMsg'); if (m) { m.classList.remove('show'); m.textContent = ''; }
+    done();
+  }, 420);
+}
+/* only a message that needs the person (e.g. "finish signing in in the browser") is shown for real */
+function setStatus(msg, sticky) {
+  if (!sticky) return;
+  LD.sticky = msg || '';
+  if (LD.on) ldShowText();
 }
 function setScanning(on, msg) {
   const was = S.scanning;
   S.scanning = on;
   const l = $('#loader');
-  if (l) l.classList.toggle('on', !!on);
-  if (!on) setStatus('');
-  else if (msg) setStatus(msg);
-  if (!on && !isLocked() && (was || !S.introShown)) { S.introShown = true; requestAnimationFrame(runIntro); }
+  if (on) {
+    ldStart(!!msg || LD.long);
+    if (l) l.classList.add('on');
+    return;
+  }
+  const finish = () => {
+    if (l) l.classList.remove('on');
+    if (!isLocked() && (was || !S.introShown)) { S.introShown = true; requestAnimationFrame(runIntro); }
+  };
+  const shown = l && l.classList.contains('on');
+  if (shown && !LD.hideT) ldFinish(finish);
+  else if (!shown) finish();
 }
 /* gentle top-to-bottom fade-in: everything on entering the site, only the list area when switching sections */
 /* the whole list fades in as one smooth sweep: total spread ~0.22s however many rows there are */
@@ -765,6 +878,7 @@ async function refresh() {
     try { await openDrive(S.drive.id, true, false, true); toast('File list refreshed'); } catch (e) { /* already reported */ }
     return;
   }
+  if (S.desk && DESK) { try { await openDesk(S.desk.path); toast('File list refreshed'); } catch (e) { /* already reported */ } return; }
   if (S.handle) {
     try {
       const p = await S.handle.requestPermission({ mode: 'read' });
@@ -1456,13 +1570,17 @@ const coverUrl = (img) => (img.url = img.url || fileUrl(img.file));
 async function preloadCovers() {
   const covers = new Set();
   S.albums.forEach((i) => { if (i.cover) covers.add(i.cover); });
-  const list = [...covers].filter((c) => c.file && c.file.remote && !c.url);
+  const list = [...covers].filter((c) => c.file && (c.file.remote || c.file.rel !== undefined) && !c.url);
   let idx = 0;
   const worker = async () => {
     while (idx < list.length) {
       const c = list[idx++];
       const k = 'dcov:' + S.metaKey + ':' + c.file.id;
       try {
+        if (!c.file.remote) { /* desktop folder: read once, then every redraw uses the same in-memory picture */
+          c.url = URL.createObjectURL(new Blob([await c.file.arrayBuffer()], { type: c.file.type || 'image/jpeg' }));
+          continue;
+        }
         const rec = await idb.get(k);
         if (rec && rec.blob && rec.mod === c.file.lastModified) { c.url = URL.createObjectURL(rec.blob); continue; }
         const blob = new Blob([await c.file.arrayBuffer()], { type: c.file.type || 'image/jpeg' });
@@ -1764,6 +1882,65 @@ function insertStamp() {
 
 /* ================= events ================= */
 $('#homeBtn').addEventListener('click', () => go('home'));
+/* five quick clicks on the logo open the engineering menu */
+let logoTaps = [];
+$('#homeBtn').addEventListener('click', () => {
+  const t = Date.now();
+  logoTaps = logoTaps.filter((x) => t - x < 2200);
+  logoTaps.push(t);
+  if (logoTaps.length >= 5) { logoTaps = []; openEngDialog(); }
+});
+function openEngDialog() {
+  closeDialog();
+  const n = Object.keys((S.meta && S.meta.dates) || {}).length;
+  const d = document.createElement('div');
+  d.className = 'dlg'; d.id = 'dlg';
+  d.innerHTML = `<div class="dlg-box" role="dialog" aria-label="Engineering">
+    <div class="dlg-h"><div><h3>Engineering</h3><p class="dlg-sub">Test tools. Dates set by hand: ${n}</p></div><button class="iconbtn sm" data-e="close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></div>
+    <div class="eng-list">
+      <button class="ghost" data-e="export"><i class="fa-solid fa-file-arrow-down"></i>Export Dates</button>
+      <button class="ghost" data-e="import"><i class="fa-solid fa-file-arrow-up"></i>Import Dates</button>
+    </div>
+    <p class="eng-note">Export saves every date you changed. Import puts them back by file path, so it also works after a new build or on another device.</p>
+    <input type="file" id="engFile" accept=".json,application/json" hidden>
+  </div>`;
+  document.body.appendChild(d);
+  d.addEventListener('click', (e) => {
+    if (e.target === d) { closeDialog(); return; }
+    const b = e.target.closest('[data-e]');
+    if (!b) return;
+    const act = b.dataset.e;
+    if (act === 'close') closeDialog();
+    else if (act === 'import') $('#engFile').click();
+    else if (act === 'export') {
+      const dates = Object.assign({}, (S.meta && S.meta.dates) || {});
+      const out = { app: 'dean-jane-console', kind: 'dates', version: 1, exported: new Date().toISOString(), source: S.name || '', count: Object.keys(dates).length, dates };
+      const u = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' }));
+      const a = document.createElement('a');
+      a.href = u; a.download = 'dean-jane-dates-' + new Date().toISOString().slice(0, 10) + '.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(u), 30000);
+      toast('Exported ' + out.count + ' dates');
+    }
+  });
+  $('#engFile').addEventListener('change', async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    try {
+      const data = JSON.parse(await f.text());
+      if (!data || data.kind !== 'dates' || !data.dates || typeof data.dates !== 'object') throw new Error('bad');
+      let n2 = 0, skipped = 0;
+      for (const [k, v] of Object.entries(data.dates)) {
+        if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) { if (!S.meta.dates) S.meta.dates = {}; S.meta.dates[k] = v; n2++; } else skipped++;
+      }
+      saveMeta();
+      closeDialog();
+      renderAll();
+      toast('Imported ' + n2 + ' dates' + (skipped ? ', skipped ' + skipped : ''));
+    } catch (err) { toast('That is not a dates file'); }
+  });
+}
+
 $('#nav').addEventListener('click', (e) => {
   const b = e.target.closest('[data-sec]');
   if (!b) return;
@@ -1783,7 +1960,21 @@ $('#search').addEventListener('input', (e) => {
 });
 $('#folderBtn').addEventListener('click', pickFolder);
 $('#refreshBtn').addEventListener('click', refresh);
-$('#themeBtn').addEventListener('click', () => { S.theme = S.theme === 'dark' ? 'light' : 'dark'; applyTheme(); });
+$('#themeBtn').addEventListener('click', () => {
+  const next = S.theme === 'dark' ? 'light' : 'dark';
+  const apply = () => { S.theme = next; applyTheme(); };
+  if (!document.startViewTransition) { apply(); return; }
+  const r = $('#themeBtn').getBoundingClientRect();
+  const x = r.left + r.width / 2, y = r.top + r.height / 2;
+  const R = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+  const t = document.startViewTransition(apply);
+  t.ready.then(() => {
+    document.documentElement.animate(
+      { clipPath: ['circle(0px at ' + x + 'px ' + y + 'px)', 'circle(' + R + 'px at ' + x + 'px ' + y + 'px)'] },
+      { duration: 700, easing: 'cubic-bezier(.4,0,.2,1)', pseudoElement: '::view-transition-new(root)' }
+    );
+  }).catch(() => {});
+});
 
 $('#list').addEventListener('click', (e) => {
   const act = e.target.closest('[data-act]');
@@ -1941,7 +2132,7 @@ $('#fallback').addEventListener('change', async (e) => {
   const files = Array.from(e.target.files || []);
   e.target.value = '';
   if (!files.length) return;
-  S.handle = null;
+  S.handle = null; S.desk = null;
   S.source = 'local'; S.drive = null;
   lsSet('console-source', '{"type":"local"}');
   setScanning(true, 'Reading folder…');
@@ -1961,6 +2152,13 @@ document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.b
 document.addEventListener('drop', async (e) => {
   e.preventDefault();
   document.body.classList.remove('dragging');
+  if (DESK) {
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    const p = f ? DESK.pathOf(f) : '';
+    if (!p) { toast('Drop a folder'); return; }
+    openDesk(p).catch(() => {});
+    return;
+  }
   const item = e.dataTransfer && e.dataTransfer.items && e.dataTransfer.items[0];
   if (!item || !item.getAsFileSystemHandle) { toast('Dropping a folder works in Chrome and Edge'); return; }
   try {
@@ -1979,7 +2177,7 @@ const GD_SHORT = 'application/vnd.google-apps.shortcut';
 const GD_DOC = 'application/vnd.google-apps.document';
 const GD = { token: null, exp: 0, pending: null, timer: null, dead: false };
 try { const t = JSON.parse(sessionStorage.getItem('console-gtoken') || 'null'); if (t && t.exp > Date.now()) { GD.token = t.token; GD.exp = t.exp; } } catch (e) { /* no saved token */ }
-const gdClientId = () => lsGet('console-gclient', '');
+const gdClientId = () => lsGet('console-gclient', '') || (S.deskG && S.deskG.clientId) || '';
 const gdValid = () => !!GD.token && Date.now() < GD.exp;
 
 /* ---- service worker that streams Drive files ---- */
@@ -2044,11 +2242,30 @@ const GD_ERR = {
   invalid_client: 'Google rejected the Client ID. Check that it is copied exactly'
 };
 const gdMsg = (k, fallback) => GD_ERR[k] || fallback || 'Google sign-in failed';
+function gdApply(token, expiresIn) {
+  GD.token = token; GD.dead = false;
+  GD.exp = Date.now() + Math.max(60, (expiresIn || 3600) - 90) * 1000;
+  try { sessionStorage.setItem('console-gtoken', JSON.stringify({ token: GD.token, exp: GD.exp })); } catch (e) { /* ignore */ }
+  pushToken();
+  gdSchedule();
+  hideReconnect();
+}
+/* desktop app: the long-lived sign-in is kept by the app itself, so renewing is silent and never expires on its own */
+async function gdTokenDesk(interactive) {
+  if (interactive && S.scanning) setStatus('Finish signing in in your browser. Press Esc to cancel', true);
+  const limit = new Promise((res) => setTimeout(() => res({ ok: false, code: 'timeout', message: interactive ? 'Sign-in took too long. Try again' : 'Google sign-in needs a click' }), interactive ? 190000 : 25000));
+  const r = await Promise.race([DESK.google.token(!!interactive, interactive === 'pick'), limit]);
+  setStatus('', true);
+  if (!r || !r.ok) throw Object.assign(new Error((r && r.message) || 'Google sign-in failed'), { quiet: !interactive || (r && r.code === 'needs_login'), code: r && r.code });
+  gdApply(r.access_token, r.expires_in);
+  setStatus('', true);
+  return GD.token;
+}
 /* interactive = true opens the Google window and must be called straight from a click.
    Without a click the browser blocks that window, so a quiet attempt gets a short time limit instead of hanging. */
 function gdToken(interactive) {
   if (GD.pending) return GD.pending;
-  const p = (async () => {
+  const p = DESK ? gdTokenDesk(interactive) : (async () => {
     const cid = gdClientId();
     if (!cid) throw new Error('Add your Google Client ID first');
     await loadGIS();
@@ -2061,15 +2278,8 @@ function gdToken(interactive) {
           client_id: cid,
           scope: GD_SCOPE,
           callback: (r) => {
-            if (r && r.access_token) {
-              GD.token = r.access_token; GD.dead = false;
-              GD.exp = Date.now() + Math.max(60, (r.expires_in || 3600) - 90) * 1000;
-              try { sessionStorage.setItem('console-gtoken', JSON.stringify({ token: GD.token, exp: GD.exp })); } catch (e) { /* ignore */ }
-              pushToken();
-              gdSchedule();
-              hideReconnect();
-              fin(resolve, GD.token);
-            } else fin(reject, new Error(gdMsg(r && r.error, r && (r.error_description || r.error))));
+            if (r && r.access_token) { gdApply(r.access_token, r.expires_in); fin(resolve, GD.token); }
+            else fin(reject, new Error(gdMsg(r && r.error, r && (r.error_description || r.error))));
           },
           error_callback: (e) => fin(reject, new Error(gdMsg(e && e.type)))
         });
@@ -2081,6 +2291,7 @@ function gdToken(interactive) {
   p.then(() => { GD.pending = null; }, () => { GD.pending = null; });
   return p;
 }
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && DESK && GD.pending) DESK.google.cancel(); });
 /* small button shown when the Google session ran out and could not be renewed quietly */
 function showReconnect() {
   GD.dead = true;
@@ -2240,7 +2451,7 @@ async function openDrive(id, interactive, quiet, fresh) {
       setStatus('Opening your library…');
       if (!gdValid() && !GD.dead) { try { await gdToken(false); } catch (e) { GD.dead = true; } }
       await ensureSW();
-      S.handle = null; S.source = 'drive'; S.drive = { id, name: cached.name };
+      S.handle = null; S.desk = null; S.source = 'drive'; S.drive = { id, name: cached.name };
       lsSet('console-source', JSON.stringify({ type: 'drive', id, name: cached.name }));
       const entries = cached.entries.map((e) => ({ path: e.path, name: e.name, file: new DriveFile(e.m) }));
       await loadVault(entries, cached.name, 'g:' + id);
@@ -2248,8 +2459,9 @@ async function openDrive(id, interactive, quiet, fresh) {
       return;
     }
     if (!gdValid()) {
-      if (!interactive) throw Object.assign(new Error('Sign in to Google to open your library'), { needsClick: true });
-      await gdToken(interactive);
+      if (!interactive && !DESK) throw Object.assign(new Error('Sign in to Google to open your library'), { needsClick: true });
+      try { await gdToken(interactive); }
+      catch (e) { if (!interactive) throw Object.assign(new Error('Sign in to Google to open your library'), { needsClick: true }); throw e; }
     }
     await ensureSW();
     pushToken();
@@ -2258,7 +2470,7 @@ async function openDrive(id, interactive, quiet, fresh) {
     if (meta.mimeType !== GD_FOLDER) throw new Error('That link is not a folder');
     const entries = await gdWalk(id, () => {});
     if (!entries.length) throw new Error(await gdWhyEmpty(id));
-    S.handle = null; S.source = 'drive'; S.drive = { id, name: meta.name };
+    S.handle = null; S.desk = null; S.source = 'drive'; S.drive = { id, name: meta.name };
     gdFetch(GD_API + '/drive/v3/about?fields=user(emailAddress)').then((r) => r.json()).then((j) => { if (j.user && j.user.emailAddress) lsSet('console-gmail', j.user.emailAddress); }).catch(() => {});
     lsSet('console-source', JSON.stringify({ type: 'drive', id, name: meta.name }));
     idb.set('dlist:' + id, { name: meta.name, sig: gdSig(entries), entries: gdPack(entries) });
@@ -2289,13 +2501,14 @@ function openSourceDialog(required, note) {
       <button class="ghost" data-d="local"><i class="fa-solid fa-computer"></i>This Computer</button>
       <button class="ghost ${S.source === 'drive' || gdClientId() ? 'on' : ''}" data-d="drive"><i class="fa-brands fa-google-drive"></i>Google Drive</button>
     </div>
-    <div class="dlg-drive" id="dgForm" ${S.source === 'drive' || gdClientId() ? '' : 'hidden'}>
+    <div class="slide ${S.source === 'drive' || gdClientId() ? 'open' : ''}" id="dgWrap" ${S.source === 'drive' || gdClientId() ? '' : 'inert'}><div class="dlg-drive" id="dgForm">
       <label>Folder Link<input id="dgLink" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://drive.google.com/drive/folders/…" value="${esc(link)}" autocomplete="off"></label>
       <label>OAuth Client ID<input id="dgClient" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="123456789-abc.apps.googleusercontent.com" value="${esc(gdClientId())}" autocomplete="off"></label>
+      ${DESK ? `<label>OAuth Client Secret<input id="dgSecret" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="${S.deskG && S.deskG.hasSecret ? '•••••••• saved' : 'GOCSPX-…'}" autocomplete="off"></label>` : ''}
       <p class="dlg-hint">The console only reads your files (read-only access).</p>
       <p class="auth-err" id="dgErr" ${note ? '' : 'hidden'}>${esc(note || '')}</p>
       <button class="primary" data-d="connect"><i class="fa-brands fa-google-drive"></i>Connect</button>
-    </div>
+    </div></div>
     ${required && S.saved ? `<button class="linkbtn" data-d="resume"><i class="fa-solid fa-clock-rotate-left"></i>Continue: ${esc(S.saved.name)}</button>` : ''}
   </div>`;
   document.body.appendChild(d);
@@ -2306,6 +2519,7 @@ function openSourceDialog(required, note) {
     const act = b.dataset.d;
     if (act === 'close') closeDialog();
     else if (act === 'local') {
+      if (DESK) { pickLocal(); return; } /* the dialog closes by itself once the folder is open */
       if (required && !window.showDirectoryPicker) { pickLocal(); return; } /* keep the dialog until the folder arrives */
       closeDialog();
       pickLocal().then((r) => { if (r === 'cancel' && isLocked()) openSourceDialog(true); });
@@ -2314,19 +2528,33 @@ function openSourceDialog(required, note) {
       closeDialog();
       continueSaved().then(() => { if (isLocked() && !S.vault) openSourceDialog(true); });
     }
-    else if (act === 'drive') { $('#dgForm').hidden = false; loadGIS().catch(() => {}); $('#dgLink').focus(); }
+    else if (act === 'drive') {
+      const w = $('#dgWrap');
+      w.classList.add('open'); w.removeAttribute('inert');
+      d.querySelectorAll('.dlg-opts .ghost').forEach((x) => x.classList.toggle('on', x === b));
+      if (!DESK) loadGIS().catch(() => {});
+      setTimeout(() => { const l = $('#dgLink'); if (l && !l.value) l.focus(); }, 380);
+    }
     else if (act === 'connect') {
       const cid = $('#dgClient').value.trim().replace(/\s+/g, '').replace(/[\u200b-\u200d\ufeff]/g, '');
       const id = gdFolderId($('#dgLink').value);
       if (!cid) { toast('Paste your OAuth Client ID'); return; }
       if (!id) { toast('Paste the link of a Google Drive folder'); return; }
+      if (DESK) {
+        const sec = $('#dgSecret').value.trim();
+        if (!sec && !(S.deskG && S.deskG.hasSecret)) { toast('Paste your OAuth Client Secret'); return; }
+        lsSet('console-gclient', cid);
+        b.disabled = true;
+        DESK.google.saveClient(cid, sec).then((st) => { S.deskG = st; closeDialog(); openDrive(id, 'pick').catch(() => {}); }, () => { b.disabled = false; toast('Could not save the key'); });
+        return;
+      }
       lsSet('console-gclient', cid);
       b.disabled = true;
       closeDialog();
       openDrive(id, 'pick').catch(() => {});
     }
   });
-  if (!$('#dgForm').hidden) loadGIS().catch(() => {});
+  if (!DESK && $('#dgWrap').classList.contains('open')) loadGIS().catch(() => {});
 }
 function pickFolder() { openSourceDialog(); }
 
@@ -2466,7 +2694,11 @@ async function enterApp(user) {
     S.source = 'drive'; S.drive = { id: src.id, name: src.name || 'Google Drive' };
     try { await openDrive(src.id, false, true); return; } catch (e) { return; } /* openDrive reopens the chooser on failure */
   }
-  const h = await idb.get('handle');
+  if (src && src.type === 'desk' && DESK && src.path) {
+    try { await openDesk(src.path); } catch (e) { /* openDesk reopens the chooser on failure */ }
+    return;
+  }
+  const h = DESK ? null : await idb.get('handle');
   if (h) {
     S.saved = h;
     let state = 'prompt';
@@ -2534,12 +2766,14 @@ async function boot1() {
       history.replaceState(null, '', location.pathname + location.search);
     }
   } catch (e) { /* ignore a broken link */ }
+  if (DESK) { try { S.deskG = await DESK.google.status(); } catch (e) { S.deskG = null; } }
   document.body.classList.add('locked');
   await sleep(450); /* a short, quiet preloader before the sign-in form */
   let user = sessionUser();
   if (!user) { setScanning(false); user = await showAuth(); }
   await enterApp(user);
 }
+ldStart(false);
 boot();
 
 })();
