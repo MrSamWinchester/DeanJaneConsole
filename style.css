@@ -27,8 +27,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .muted{color:var(--muted)}
 [hidden]{display:none !important}
 /* scroll bars stay invisible until you scroll (the .scrolling class is set by app.js) */
-html{scrollbar-width:thin;scrollbar-color:transparent transparent}
-.scrolling{scrollbar-color:var(--line2) transparent}
+*{scrollbar-width:none}
+*::-webkit-scrollbar{display:none;width:0;height:0}
 
 /* ---------- layout ---------- */
 .app{position:relative;height:100vh;display:grid;grid-template-columns:240px minmax(0,1fr) var(--detail-w,410px)}
@@ -41,7 +41,7 @@ html{scrollbar-width:thin;scrollbar-color:transparent transparent}
 .brand i{font-size:14px;flex:0 0 auto}
 .brand-t{display:block;font-size:14px}
 .nav{display:flex;flex-direction:column;gap:4px}
-.nav-h{margin:20px 0 6px;padding:0 12px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.nav-h{margin:20px 0 6px;padding:0;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 .nav-h:first-child{margin-top:0}
 .nav button{
   display:flex;align-items:center;gap:12px;width:100%;padding:9px 12px;border-radius:8px;
@@ -187,7 +187,7 @@ input[type=range]::-moz-range-track{background:transparent}
 .d-head .iconbtn.on{color:var(--text)}
 .detail>*{flex-shrink:0}
 .drawer-close{display:none}
-.drawer-close i{font-size:20px;position:relative;top:0}
+.drawer-close i{font-size:20px;position:relative;top:1.282px}
 .card{border:1px solid var(--line);border-radius:16px;background:var(--panel)}
 .wave-card{padding:18px 20px;display:flex;flex-direction:column;gap:14px}
 .wave{width:100%;height:96px;display:block;cursor:pointer}
@@ -506,11 +506,15 @@ body.no-detail .detail{display:none}
 .home-side{max-width:560px}
 .alb-grid{grid-template-columns:repeat(4,var(--cv))}
 .home-main .alb-grid{grid-template-rows:repeat(3,calc(var(--cv) + 50px))}
-@container (max-width:599px){
-  .home{--cv:calc((100cqw - 20px - 22px) / 2);grid-template-columns:1fr;gap:40px}
-  .alb-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+@container (max-width:759px){
+  .home{--cv:calc((100cqw - 20px - 66px) / 4);grid-template-columns:minmax(0,1fr);gap:40px}
+  .alb-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
   .home-main .alb-grid{grid-template-rows:none}
   .home-side{max-width:none}
+}
+@container (max-width:419px){
+  .home{--cv:calc((100cqw - 20px - 22px) / 2)}
+  .alb-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 
 /* nickname: fixed @ in front, not part of the value */
@@ -567,28 +571,45 @@ body.no-detail .detail{display:none}
 /* preloader in the style of a system boot screen: logo, thin bar, one quiet line of text */
 .loader{flex-direction:column}
 .ld-box{display:flex;flex-direction:column;align-items:center;width:100%}
-.ld-logo{display:block;width:72px;height:auto;aspect-ratio:448/416;color:var(--text);margin-bottom:68px;animation:ldin .7s ease both}
+.ld-logo{display:block;width:72px;height:auto;aspect-ratio:448/512;color:var(--text);margin-bottom:60px;animation:ldin .7s ease both}
 .ld-bar{width:176px;max-width:60vw;height:4px;border-radius:4px;background:var(--baroff);overflow:hidden}
 .ld-bar i{display:block;height:100%;width:0;border-radius:4px;background:var(--text);transition:width .4s ease-out}
 .loader .loader-msg{position:static;top:auto;bottom:auto;left:auto;right:auto;margin:22px 0 0;height:18px;max-width:90vw;font-size:12px;letter-spacing:.02em;color:var(--muted);white-space:nowrap;opacity:0;transition:opacity .38s ease}
 .loader .loader-msg.show{opacity:1}
 @keyframes ldin{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
 
-/* player: the seek bar always keeps a usable length; narrow players move it to its own row */
-.player{flex-wrap:wrap}
-.p-left{flex:1 1 160px;max-width:260px}
-.p-seek{flex:1 1 240px}
-.p-seek input[type=range]{min-width:90px}
+/* player: one row at every width. When it gets narrow, things drop out in order so the seek bar keeps a usable length:
+   cover, current time, total time, subtitle, and finally the title. The volume is a small vertical slider above its icon. */
+.player{flex-wrap:nowrap}
+.p-left{flex:0 1 200px}
+.p-seek input[type=range]{min-width:80px}
 .p-vol{position:relative;display:flex}
 .p-pop{position:absolute;bottom:100%;left:50%;padding-bottom:10px;transform:translate(-50%,8px);opacity:0;visibility:hidden;z-index:40;transition:opacity .18s ease,transform .18s ease,visibility 0s .18s}
-.p-vol:hover .p-pop,.p-vol:focus-within .p-pop{opacity:1;visibility:visible;transform:translate(-50%,0);transition-delay:0s}
-.p-popbox{padding:14px 11px;border:1px solid var(--line2);border-radius:12px;background:var(--bg);box-shadow:var(--shadow)}
+.p-vol:hover .p-pop{opacity:1;visibility:visible;transform:translate(-50%,0);transition-delay:0s}
+.p-popbox{padding:8px 11px;border:1px solid var(--line2);border-radius:12px;background:var(--bg);box-shadow:var(--shadow)}
 .p-popbox input[type=range]{display:block;writing-mode:vertical-lr;direction:rtl;width:4px;height:92px;flex:none;min-width:0;background:linear-gradient(to top,var(--text) var(--p,0%),var(--baroff) var(--p,0%))}
-@container (max-width:760px){
-  .p-left{flex:1 1 0;max-width:none}
-  .p-seek{order:5;flex:1 1 100%}
+@container (max-width:700px){
+  .p-left{flex:0 1 160px}
 }
-@container (max-width:380px){.p-cover{display:none}}
+@container (max-width:620px){
+  .p-seek span:first-child{display:none}
+  .p-left{flex:0 1 130px}
+}
+@container (max-width:520px){
+  .p-cover{display:none}
+  .p-seek span{display:none}
+  .p-left{flex:0 1 100px}
+}
+@container (max-width:440px){
+  .p-sub{display:none}
+  .p-left{flex:0 1 72px}
+}
+@container (max-width:400px){
+  .p-left{display:none}
+}
+@container (max-width:330px){
+  #pprev,#pnext{display:none}
+}
 @media (hover:none){.p-pop{display:none}}
 
 /* sliding block (Drive fields) */
@@ -609,3 +630,67 @@ body.no-detail .detail{display:none}
 .eng-list{display:flex;flex-direction:column;gap:8px}
 .eng-list .ghost{justify-content:flex-start;height:44px;padding:0 14px;gap:10px;border-radius:10px;font-size:13px}
 .eng-note{margin:0;font-size:12px;color:var(--muted)}
+
+
+/* round 9: Home reaches the bottom of the page (level with the folder / theme buttons) */
+.home-main{display:flex;flex-direction:column}
+.home-main .alb-grid{flex:1 1 auto;grid-template-rows:repeat(3,minmax(calc(var(--cv) + 50px),1fr));align-content:stretch}
+.home-side{align-self:stretch}
+@container (max-width:759px){
+  .home-main{display:block}
+  .home-main .alb-grid{grid-template-rows:none;align-content:start}
+  .home-side{align-self:start}
+}
+
+/* text is not selectable in the app, except what you read in the details panel and the input fields */
+html.desk body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+html.desk input,html.desk textarea,html.desk [contenteditable],html.desk .reader,html.desk .reader *,html.desk .detail pre,html.desk .detail pre *,html.desk .detail .lyrics,html.desk .detail .lyrics *{-webkit-user-select:text;user-select:text}
+html.desk img,html.desk .cv{-webkit-user-drag:none}
+
+.home-main{min-height:0}
+.home-main .alb-grid{min-height:0}
+.home-side{min-height:0}
+
+/* ===== round 10 ===== */
+/* notes at the bottom: only errors, in the colours of the theme */
+:root{--danger:#ff6b6b}
+[data-theme="light"]{--danger:#d6342f}
+.toast{z-index:300;background:var(--bg);color:var(--danger);border:1px solid var(--line2);box-shadow:var(--shadow);text-align:center}
+
+/* sign-in, create account, choose folder: centred */
+.dlg-box{text-align:center;align-items:stretch}
+.dlg-mark{align-self:center}
+.dlg-h{justify-content:center;text-align:center}
+.dlg-h>div{width:100%}
+.dlg-sub{text-align:center}
+.atabs{justify-content:center}
+.dlg-drive label{text-align:center;align-items:stretch}
+.dlg-drive label.chk{justify-content:center}
+.dlg-drive p{text-align:center}
+.dlg-drive .ghost,.dlg-drive .primary{align-self:center}
+.dlg-drive #authGo{align-self:stretch}
+.dlg-opts{justify-items:stretch}
+
+/* player: the close cross is as big as the speaker icon */
+#pclose,#pmute{font-size:15px}
+#pclose i{font-size:17px}
+#pmute i{font-size:15px}
+
+/* phone: no accidental zooming, no stuck scrolling */
+html,body{overscroll-behavior:none}
+html{-webkit-text-size-adjust:100%;touch-action:manipulation}
+@supports (height:100dvh){.app{height:100dvh}}
+@media (hover:none),(max-width:1000px){
+  input,textarea,select{font-size:16px}
+  .list,.side,.detail{-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+}
+body{overflow-x:hidden}
+
+/* context menu */
+.ctx{position:fixed;z-index:250;min-width:200px;padding:6px;border-radius:12px;background:var(--bg);border:1px solid var(--line2);box-shadow:var(--shadow);animation:ctxin .12s ease both}
+.ctx button{display:flex;align-items:center;gap:11px;width:100%;padding:9px 12px;border:0;border-radius:8px;background:none;font:inherit;font-size:13px;color:var(--text);text-align:left;cursor:pointer}
+.ctx button i{width:16px;text-align:center;font-size:13px;color:var(--muted)}
+.ctx button:hover{background:var(--hover)}
+@keyframes ctxin{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
+.eng-sec{display:flex;flex-direction:column;gap:10px;align-items:center}
+.eng-cap{margin:0;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}

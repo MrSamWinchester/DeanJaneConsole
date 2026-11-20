@@ -2,8 +2,8 @@
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dean Jane Console</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Impala</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%20448%20512%22%3E%3Cstyle%3Epath%7Bfill:%23111%7D%40media%20%28prefers-color-scheme:dark%29%7Bpath%7Bfill:%23fff%7D%7D%3C/style%3E%3Cpath%20d=%22M440.2%2023.2c-26.7%206.8-68.1%2028.5-114.6%2067.5-30.9-17.5-65.8-26.7-101.4-26.7-114.9%200-208%2093.1-208%20208s93.1%20208%20208%20208%20208-93.1%20208-208c.1-54.1-21-106.1-58.7-144.8-6.6%208.5-12.3%2017.7-17%2027.4%2028.9%2032.3%2044.8%2074.1%2044.9%20117.4%200%2097.7-79.4%20177.1-177.1%20177.1-30.8%200-61-8.1-87.6-23.4%2082.9-107.3%20150.8-37.8%20184.3-226.6%205.8-32.6%2028-94.3%20126.2-160.2%208.1-5.4%202.4-18.1-7-15.7zM109.3%20406.4C89.8%20389.8%2074.2%20369.2%2063.5%20346s-16.3-48.5-16.3-74c0-97.7%2079.4-177.1%20177.1-177.1%2026.6%200%2052.8%206.1%2076.6%2017.8-66%2062.1-126.9%20152.9-191.6%20293.8z%22/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -13,7 +13,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="loader on" id="loader" aria-label="Loading"><div class="ld-box"><svg class="ld-logo" viewBox="0 64 448 416" aria-hidden="true"><path fill="currentColor" d="M440.2 23.2c-26.7 6.8-68.1 28.5-114.6 67.5C294.7 73.2 259.8 64 224.2 64c-114.9 0-208 93.1-208 208s93.1 208 208 208 208-93.1 208-208c.1-54.1-21-106.1-58.7-144.8-6.6 8.5-12.3 17.7-17 27.4 28.9 32.3 44.8 74.1 44.9 117.4 0 97.7-79.4 177.1-177.1 177.1-30.8 0-61-8.1-87.6-23.4 82.9-107.3 150.8-37.8 184.3-226.6 5.8-32.6 28-94.3 126.2-160.2 8.1-5.4 2.4-18.1-7-15.7M109.3 406.4c-19.5-16.6-35.1-37.2-45.8-60.4s-16.3-48.5-16.3-74c0-97.7 79.4-177.1 177.1-177.1 26.6 0 52.8 6.1 76.6 17.8-66 62.1-126.9 152.9-191.6 293.8z"/></svg><div class="ld-bar"><i id="ldFill"></i></div><p class="loader-msg" id="loaderMsg"></p></div></div>
+<div class="loader on" id="loader" aria-label="Loading"><div class="ld-box"><svg class="ld-logo" viewBox="0 0 448 512" overflow="visible" aria-hidden="true"><path fill="currentColor" d="M440.2 23.2c-26.7 6.8-68.1 28.5-114.6 67.5C294.7 73.2 259.8 64 224.2 64c-114.9 0-208 93.1-208 208s93.1 208 208 208 208-93.1 208-208c.1-54.1-21-106.1-58.7-144.8-6.6 8.5-12.3 17.7-17 27.4 28.9 32.3 44.8 74.1 44.9 117.4 0 97.7-79.4 177.1-177.1 177.1-30.8 0-61-8.1-87.6-23.4 82.9-107.3 150.8-37.8 184.3-226.6 5.8-32.6 28-94.3 126.2-160.2 8.1-5.4 2.4-18.1-7-15.7M109.3 406.4c-19.5-16.6-35.1-37.2-45.8-60.4s-16.3-48.5-16.3-74c0-97.7 79.4-177.1 177.1-177.1 26.6 0 52.8 6.1 76.6 17.8-66 62.1-126.9 152.9-191.6 293.8z"/></svg><div class="ld-bar"><i id="ldFill"></i></div><p class="loader-msg" id="loaderMsg"></p></div></div>
 <div class="app" id="app">
 
   <aside class="side">

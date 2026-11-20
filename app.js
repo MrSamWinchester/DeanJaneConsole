@@ -1,4 +1,4 @@
-/* Dean Jane Console — runs fully locally, files are never uploaded. */
+/* Impala — runs fully locally, files are never uploaded. */
 (() => {
 'use strict';
 
@@ -24,9 +24,12 @@ const baseName = (n) => { const i = n.lastIndexOf('.'); return i <= 0 ? n : n.sl
 const dirOf = (p) => { const i = p.lastIndexOf('/'); return i < 0 ? '' : p.slice(0, i); };
 const has = (rx, s) => rx.test(s);
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } };
+/* every profile has its own connected folder */
+const srcKey = () => 'console-source:' + ((S.user && S.user.id) || '');
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
 /* set by the desktop app (preload.js); null in a normal browser */
 const DESK = window.desktop || null;
+if (DESK) document.documentElement.classList.add('desk');
 
 /* dates are kept as 'YYYY', 'YYYY-MM' or 'YYYY-MM-DD' strings */
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -55,12 +58,15 @@ const normT = (s) => s.toLowerCase()
 const RX_YEAR = /(?:^|[^0-9])((?:19|20)\d{2})(?:[^0-9]|$)/;
 
 let toastTimer;
-function toast(msg) {
+/* messages at the bottom are gone, except errors: those show as a small red note in the colours of the theme */
+function toast() { /* success messages are intentionally silent */ }
+function warn(msg) {
   const t = $('#toast');
+  if (!t || !msg) return;
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
 }
 
 /* ================= storage (IndexedDB) ================= */
@@ -112,7 +118,7 @@ const SECTIONS = [
   { id: 'home', label: 'Home', icon: 'fa-house' },
   { id: 'all', label: 'All', icon: 'fa-table-cells-large' },
   { id: 'lyrics', group: 'music', label: 'Lyrics', icon: 'fa-feather-pointed' },
-  { id: 'demo', group: 'music', label: 'Demos', icon: 'fa-microphone-lines' },
+  { id: 'demo', group: 'music', label: 'Demos', icon: 'fa-microphone' },
   { id: 'disc', group: 'music', label: 'Discography', icon: 'fa-compact-disc' },
   { id: 'docs', group: 'music', label: 'Docs', icon: 'fa-file' },
   { id: 'video', group: 'music', label: 'Videos', icon: 'fa-film' },
@@ -124,6 +130,18 @@ const SECTIONS = [
   { id: 'other', label: 'Other', icon: 'fa-folder-open' }
 ];
 const SEC = Object.fromEntries(SECTIONS.map((s) => [s.id, s]));
+/* hidden twins of two sections: Demos -> Early Demos (folder "Early Demos" inside Demos),
+   Discography -> Unreleased Discography (folder "Unreleased Discography" inside Discography) */
+const SECRET = { demo: { label: 'Early Demos', rx: /^early[\s_-]*demos?$/i }, disc: { label: 'Unreleased Discography', rx: /^unreleased(?:[\s_-]*discography)?$/i } };
+const secLabel = (s) => (SECRET[s.id] && S.secret[s.id] ? SECRET[s.id].label : s.label);
+const groupHidden = (it) => { const g = SEC[it.section] && SEC[it.section].group; return !!g && S.hideGroups.includes(g); };
+/* what the whole console shows: no hidden files, no secret folders, no sections switched off in the Engineering menu */
+const visibleItem = (i) => !i.hidden && !i.secret && !groupHidden(i);
+function secretOf(it) {
+  const k = SECRET[it.section];
+  if (!k) return '';
+  return (it.dir ? it.dir.split('/') : []).some((s) => k.rx.test(s)) ? it.section : '';
+}
 const GROUPED = new Set(['demo', 'lyrics', 'video', 'lyricvideo']); /* lists split by album folder */
 const WIDE_SECS = new Set(['docs', 'n_docs', 'n_notes', 'n_bib']); /* these readers get a fixed-width panel */
 /* ===== Details panel widths in px (desktop) — change the numbers here =====
@@ -155,6 +173,7 @@ const S = {
   base: [], items: [], albums: [], byUid: new Map(), byPath: new Map(), uid: 1,
   idx: { byAlbumTitle: new Map(), byTitle: new Map() },
   section: 'home', query: '', sort: 'date',
+  secret: {}, hideGroups: [],
   selected: null, now: null, queue: [], videoItem: null,
   meta: { favs: {}, notes: {}, dates: {}, history: [], last: '' },
   theme: lsGet('vault-theme', 'dark'),
@@ -240,6 +259,7 @@ function classifyAll() {
     it.hidden = false; it.album = null; it.order = null; it.link = null;
     it.section = autoSection(it);
     it.albumName = albumNameOf(it);
+    it.secret = secretOf(it);
     it._hay = null;
     if (it.kind === 'image') {
       it.hidden = true;
@@ -253,10 +273,11 @@ function classifyAll() {
       if (!key) return;
       let a = albums.get(key);
       if (!a) {
-        a = { uid: S.uid++, kind: 'album', path: key, title: key.split('/').pop(), tracks: [], section: 'disc', ext: '', dir: dirOf(key), hidden: false, albumName: '', _hay: null };
+        a = { uid: S.uid++, kind: 'album', path: key, title: key.split('/').pop(), tracks: [], section: 'disc', ext: '', dir: dirOf(key), hidden: false, secret: '', albumName: '', _hay: null };
         albums.set(key, a);
       }
       a.tracks.push(it);
+      if (it.secret) a.secret = it.secret;
       it.album = a;
       it.hidden = true;
     }
@@ -535,7 +556,8 @@ function haystack(it) {
 }
 function filtered() {
   const q = S.query.trim().toLowerCase();
-  let list = S.items.filter((i) => !i.hidden);
+  let list = S.items.filter(visibleItem);
+  if (SECRET[S.section] && S.secret[S.section]) list = S.items.filter((i) => !i.hidden && !groupHidden(i) && i.section === S.section && i.secret === S.section);
   if (S.section !== 'home' && S.section !== 'all') {
     list = list.filter((i) => i.section === S.section || (S.section === 'video' && i.section === 'lyricvideo'));
   }
@@ -572,6 +594,13 @@ function groupItems(list) {
   if (none.length) named.push({ name: '', items: sortItems(none) });
   return named;
 }
+/* Early Demos: one group per year */
+function groupByYear(list) {
+  const map = new Map();
+  list.forEach((it) => { const fy = (it.dir ? it.dir.split('/') : []).find((p) => /^(19|20)\d\d$/.test(p));
+    const y = fy || String(getDate(it) || '').slice(0, 4) || 'Unknown'; if (!map.has(y)) map.set(y, []); map.get(y).push(it); });
+  return [...map.entries()].sort((a, b) => (S.sort === 'date' ? a[0].localeCompare(b[0]) : b[0].localeCompare(a[0]))).map(([name, items]) => ({ name, items: sortItems(items) }));
+}
 function layout() {
   const list = filtered();
   if (S.section === 'video') {
@@ -580,6 +609,7 @@ function layout() {
       { title: 'Lyric Videos', groups: groupItems(list.filter((i) => i.section === 'lyricvideo')) }
     ] };
   }
+  if (S.section === 'demo' && S.secret.demo) return { groups: groupByYear(list) };
   if (GROUPED.has(S.section)) return { groups: groupItems(list) };
   return { groups: [{ name: '', items: sortItems(list) }] };
 }
@@ -661,13 +691,13 @@ async function openDesk(dir) {
     const r = await DESK.openFolder(dir);
     if (!r || !r.ok) throw new Error((r && r.message) || 'Could not open the folder');
     const entries = r.entries.map((e) => ({ path: e.p, name: e.p.slice(e.p.lastIndexOf('/') + 1), file: new DeskFile(info.fileBase, e) }));
-    lsSet('console-source', JSON.stringify({ type: 'desk', path: dir, name: r.name }));
+    lsSet(srcKey(), JSON.stringify({ type: 'desk', path: dir, name: r.name }));
     await loadVault(entries, r.name, 'd:' + dir);
   } catch (e) {
     console.error(e);
     setScanning(false);
     renderList();
-    toast(e.message || 'Could not open the folder');
+    warn(e.message || 'Could not open the folder');
     if (isLocked()) openSourceDialog(true);
     throw e;
   }
@@ -687,7 +717,7 @@ async function pickLocal() {
       await openHandle(h);
       return 'ok';
     } catch (e) {
-      if (e && e.name !== 'AbortError') { console.error(e); toast('Could not open the folder'); }
+      if (e && e.name !== 'AbortError') { console.error(e); warn('Could not open the folder'); }
       return 'cancel';
     }
   }
@@ -698,7 +728,7 @@ async function pickLocal() {
 async function openHandle(h) {
   S.handle = h; S.desk = null;
   S.source = 'local'; S.drive = null;
-  lsSet('console-source', '{"type":"local"}');
+  lsSet(srcKey(), '{"type":"local"}');
   setScanning(true, 'Reading folder…');
   try {
     const entries = [];
@@ -714,7 +744,7 @@ async function openHandle(h) {
     await loadVault(files, h.name);
   } catch (e) {
     console.error(e);
-    toast('Error reading the folder');
+    warn('Error reading the folder');
     setScanning(false);
     if (isLocked()) openSourceDialog(true);
   }
@@ -769,14 +799,11 @@ async function loadVault(entries, name, key) {
 
 const isLocked = () => document.body.classList.contains('locked');
 /* ---- preloader: logo, a thin bar and a changing line of text.
-   The lines are only for atmosphere (not real status): no dots, no counters. */
+   The lines name what the console is preparing (they go in order, no dots, no counters). */
 const LD_TEXTS = [
-  'Tuning the guitars', 'Sharpening the pencils', 'Dusting off the old demos', 'Untangling the cables', 'Finding the right key',
-  'Counting the bars', 'Warming up the amps', 'Sorting the setlist', 'Reading between the lines', 'Rewinding the tape',
-  'Straightening the album covers', 'Hunting for lost lyrics', 'Polishing the chorus', 'Checking the metronome', 'Tidying the studio',
-  'Waking up the speakers', 'Finding the downbeat', 'Adding a little reverb', 'Labeling the tapes', 'Stacking the records',
-  'Turning the pages', 'Humming the melody', 'Setting up the microphones', 'Sharpening the harmonies', 'Warming up the vocal booth',
-  'Dimming the lights', 'Folding the setlists', 'Rehearsing the bridge', 'Listening for the hook', 'Opening the notebooks'
+  'Reading your library', 'Loading song metadata', 'Preparing album covers', 'Collecting lyrics', 'Sorting demos',
+  'Building the discography', 'Checking track durations', 'Organizing albums by date', 'Gathering videos and docs', 'Setting up search',
+  'Preparing the player', 'Arranging your Home page'
 ];
 const LD = { on: false, long: false, p: 0, t0: 0, iv: 0, rot: 0, i: 0, order: [], sticky: '', hideT: 0 };
 function ldFill(w, instant) {
@@ -799,7 +826,7 @@ function ldStart(long) {
   clearTimeout(LD.hideT); LD.hideT = 0;
   if (long && !LD.long) {
     LD.long = true;
-    LD.order = LD_TEXTS.slice().sort(() => Math.random() - 0.5); LD.i = 0;
+    LD.order = LD_TEXTS.slice(); LD.i = 0;
     if (LD.on) { clearInterval(LD.rot); ldShowText(); LD.rot = setInterval(ldShowText, 2900); }
   }
   if (LD.on) return;
@@ -882,12 +909,12 @@ async function refresh() {
   if (S.handle) {
     try {
       const p = await S.handle.requestPermission({ mode: 'read' });
-      if (p !== 'granted') { toast('No access to the folder'); return; }
+      if (p !== 'granted') { warn('No access to the folder'); return; }
     } catch (e) { /* ignore */ }
     await openHandle(S.handle);
     toast('File list refreshed');
   } else {
-    toast('Open the folder again to refresh');
+    warn('Open the folder again to refresh');
   }
 }
 
@@ -1038,13 +1065,14 @@ async function loadAllText() {
 /* ================= rendering: nav / head / list ================= */
 function renderNav() {
   const counts = {};
-  S.items.forEach((i) => { if (!i.hidden) counts[i.section] = (counts[i.section] || 0) + 1; });
-  const total = S.items.filter((i) => !i.hidden).length;
+  S.items.forEach((i) => { if (visibleItem(i)) counts[i.section] = (counts[i.section] || 0) + 1; });
+  const total = S.items.filter(visibleItem).length;
+  Object.keys(SECRET).forEach((k) => { if (S.secret[k]) counts[k] = S.items.filter((i) => !i.hidden && !groupHidden(i) && i.section === k && i.secret === k).length; });
   const num = (id) => (id === 'all' ? total : id === 'video' ? (counts.video || 0) + (counts.lyricvideo || 0) : (counts[id] || 0));
-  const btn = (s) => `<button data-sec="${s.id}" class="${S.section === s.id ? 'on' : ''}"><i class="fa-solid ${s.icon}"></i><span>${s.label}</span><span class="n">${S.vault ? num(s.id) : ''}</span></button>`;
+  const btn = (s) => `<button data-sec="${s.id}" class="${S.section === s.id ? 'on' : ''}"><i class="fa-solid ${s.icon}"></i><span>${secLabel(s)}</span><span class="n">${S.vault ? num(s.id) : ''}</span></button>`;
   let html = '';
   if (SHOW_ALL_IN_MENU) html += btn(SEC.all);
-  GROUPS.forEach((g) => {
+  GROUPS.filter((g) => !S.hideGroups.includes(g.id)).forEach((g) => {
     html += `<div class="nav-h">${g.label}</div>`;
     SECTIONS.filter((s) => s.group === g.id && !s.hiddenNav).forEach((s) => { html += btn(s); });
   });
@@ -1055,7 +1083,7 @@ function renderHead() {
   const s = SEC[S.section];
   const searching = S.section === 'home' && !!S.query.trim();
   const home = S.section === 'home' && !searching;
-  $('#title').textContent = searching ? 'Search' : s.label;
+  $('#title').textContent = searching ? 'Search' : secLabel(s);
   $('#sort').hidden = home;
   applyDetailWidth();
   $$('#sort button').forEach((b) => b.classList.toggle('on', b.dataset.sort === S.sort));
@@ -1102,9 +1130,9 @@ function scheduleHome() {
 const HOME_RANK = new Map();
 const homeRank = (al) => { const k = al.title; if (!HOME_RANK.has(k)) HOME_RANK.set(k, Math.random()); return HOME_RANK.get(k); };
 function homeHtml() {
-  const items = S.items.filter((i) => !i.hidden);
+  const items = S.items.filter(visibleItem);
   /* a random order that is drawn once per page load and then stays, whatever dates arrive later */
-  const albums = S.albums.slice().sort((x, y) => homeRank(x) - homeRank(y));
+  const albums = S.albums.filter(visibleItem).sort((x, y) => homeRank(x) - homeRank(y));
   const coverOf = (al) => (al.cover ? `<img alt="" decoding="sync" src="${coverUrl(al.cover)}">` : '<i class="fa-solid fa-compact-disc"></i>');
   const grid = albums.slice(0, 12).map((al) => `<button class="alb" data-open="${al.uid}"><span class="cv">${coverOf(al)}</span><b>${esc(al.title)}</b><small>${esc(monthYear(getDate(al)))}</small></button>`).join('');
   const recent = items.filter((i) => !(i.kind === 'audio' && i.section === 'disc')).sort((x, y) => y.modified - x.modified).slice(0, 40);
@@ -1146,10 +1174,16 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitBrand);
 const REC_ROW = 68; /* same row pitch as the Discography list: 64px row + 4px gap */
 const REC_GAP = 4;
 function fitRecent() {
-  const rec = $('.rec'), g = $('.alb-grid');
+  const rec = $('.rec'), g = $('.alb-grid'), home = $('.home'), list = $('#list');
+  /* Home is exactly as tall as the list: the albums and Recent end level with the buttons at the bottom of the menu */
+  if (home && list) {
+    if (list.clientWidth - 20 >= 760 && list.clientHeight > 0) { home.style.boxSizing = 'border-box'; home.style.height = list.clientHeight + 'px'; home.style.minHeight = '0'; }
+    else { home.style.height = ''; home.style.minHeight = ''; }
+  }
   if (!rec || !g) return;
-  const h = g.offsetHeight;
-  if (!h) return;
+  if (!g.offsetHeight) return;
+  const h = Math.floor(g.getBoundingClientRect().bottom - rec.getBoundingClientRect().top); /* Recent ends exactly where the albums end */
+  if (h < REC_ROW) return;
   rec.style.height = h + 'px';
   const rows = [...rec.children];
   const n = Math.max(1, Math.floor((h + REC_GAP) / REC_ROW));
@@ -1163,7 +1197,7 @@ function renderList() {
   const el = $('#list');
   const st = el.scrollTop;
   if (!S.vault) { el._home = null; el.innerHTML = welcomeHtml(); $('#count').textContent = ''; return; }
-  const totalFiles = S.items.filter((i) => !i.hidden).length;
+  const totalFiles = S.items.filter(visibleItem).length;
   const searching = !!S.query.trim();
   el.classList.toggle('is-home', S.section === 'home' && !searching);
   if (S.section === 'home' && !searching) {
@@ -1194,6 +1228,17 @@ function renderList() {
   refreshRowStates();
   markSelectedRow();
 }
+
+/* a click on empty space (not on an item, not in the details panel) empties the details panel and clears the active row */
+document.addEventListener('click', (e) => {
+  if (!S.selected || window.matchMedia('(max-width:1000px)').matches) return;
+  const t = e.target;
+  if (!t.closest || !t.closest('.main,.side')) return;
+  if (t.closest('.player,.top,button,a,input,textarea,label,.row,.alb,.rrow,.mini,[data-pick],[data-open],[data-go],[data-act],.seg,.sortbar,#ctx')) return;
+  S.selected = null;
+  markSelectedRow();
+  renderDetail();
+});
 
 function markSelectedRow() {
   $$('#list .row').forEach((r) => r.classList.toggle('sel', !!S.selected && +r.dataset.uid === S.selected.uid));
@@ -1298,7 +1343,7 @@ function playAudioItem(it, queue, startAt) {
   pendingSeek = startAt || null;
   audio.src = audioUrl;
   applyVolume();
-  audio.play().catch((err) => { if (err && err.name !== 'AbortError') toast('Could not play: ' + it.name); });
+  audio.play().catch((err) => { if (err && err.name !== 'AbortError') warn('Could not play: ' + it.name); });
   renderPlayer();
   onPlayState();
 }
@@ -1333,7 +1378,7 @@ audio.addEventListener('loadedmetadata', () => {
   if (pendingSeek !== null) { audio.currentTime = pendingSeek; pendingSeek = null; }
   updateTimeUI();
 });
-audio.addEventListener('error', () => { if (S.now && audio.src) toast('Could not play: ' + S.now.name); });
+audio.addEventListener('error', () => { if (S.now && audio.src) warn('Could not play: ' + S.now.name); });
 
 function setFill(r) {
   const max = Number(r.max) || 0;
@@ -1494,7 +1539,7 @@ function setupVideo(it, autoplay) {
     if (!seek.dataset.drag) { seek.value = d ? (videoEl.currentTime / d) * 1000 : 0; setFill(seek); }
     $('#vtime').textContent = fmt(videoEl.currentTime) + ' / ' + fmt(d);
   });
-  videoEl.addEventListener('error', () => toast('Could not play the video. The browser may not support this format.'));
+  videoEl.addEventListener('error', () => warn('Could not play the video. The browser may not support this format.'));
   videoEl.addEventListener('click', toggleVideo);
   seek.addEventListener('pointerdown', () => { seek.dataset.drag = '1'; });
   seek.addEventListener('pointerup', () => { delete seek.dataset.drag; });
@@ -1565,12 +1610,23 @@ async function fillReader(it) {
 }
 
 /* ================= detail panel ================= */
-const coverUrl = (img) => (img.url = img.url || fileUrl(img.file));
+/* one picture address per cover, kept for the whole session: a re-read of the folder or a refreshed Drive listing
+   makes new file objects, but the cover keeps its address, so the browser never has to load it again */
+const COVER_URLS = new Map();
+const coverKey = (img) => (S.metaKey || S.name) + '|' + (img.file && img.file.id !== undefined ? img.file.id : img.path) + '|' + ((img.file && img.file.lastModified) || img.modified || 0);
+const coverUrl = (img) => {
+  const u = COVER_URLS.get(coverKey(img));
+  if (u) return (img.url = u);
+  img.url = img.url || fileUrl(img.file);
+  if (String(img.url).startsWith('blob:') && !(img.file && img.file.remote)) COVER_URLS.set(coverKey(img), img.url);
+  return img.url;
+};
 /* Drive covers are downloaded once and kept as blobs, so they never reload when you switch pages */
 async function preloadCovers() {
   const covers = new Set();
   S.albums.forEach((i) => { if (i.cover) covers.add(i.cover); });
-  const list = [...covers].filter((c) => c.file && (c.file.remote || c.file.rel !== undefined) && !c.url);
+  covers.forEach((c) => { const u = COVER_URLS.get(coverKey(c)); if (u) c.url = u; });
+  const list = [...covers].filter((c) => c.file && (c.file.remote || c.file.rel !== undefined) && !COVER_URLS.has(coverKey(c)));
   let idx = 0;
   const worker = async () => {
     while (idx < list.length) {
@@ -1579,12 +1635,14 @@ async function preloadCovers() {
       try {
         if (!c.file.remote) { /* desktop folder: read once, then every redraw uses the same in-memory picture */
           c.url = URL.createObjectURL(new Blob([await c.file.arrayBuffer()], { type: c.file.type || 'image/jpeg' }));
+          COVER_URLS.set(coverKey(c), c.url);
           continue;
         }
         const rec = await idb.get(k);
-        if (rec && rec.blob && rec.mod === c.file.lastModified) { c.url = URL.createObjectURL(rec.blob); continue; }
+        if (rec && rec.blob && rec.mod === c.file.lastModified) { c.url = URL.createObjectURL(rec.blob); COVER_URLS.set(coverKey(c), c.url); continue; }
         const blob = new Blob([await c.file.arrayBuffer()], { type: c.file.type || 'image/jpeg' });
         c.url = URL.createObjectURL(blob);
+        COVER_URLS.set(coverKey(c), c.url);
         idb.set(k, { mod: c.file.lastModified, blob });
       } catch (e) { /* falls back to the streamed link */ }
     }
@@ -1737,7 +1795,7 @@ function renderDetail(opts) {
       if (S.selected !== it || !$('#pdf')) return;
       pdfUrl = URL.createObjectURL(new Blob([buf], { type: 'application/pdf' }));
       $('#pdf').src = pdfUrl;
-    }).catch(() => toast('Could not load the PDF'));
+    }).catch(() => warn('Could not load the PDF'));
   }
   updateDetailPlayState();
 }
@@ -1890,6 +1948,40 @@ $('#homeBtn').addEventListener('click', () => {
   logoTaps.push(t);
   if (logoTaps.length >= 5) { logoTaps = []; openEngDialog(); }
 });
+/* ================= context menu (follows the theme) ================= */
+function closeCtx() { const c = $('#ctx'); if (c) c.remove(); }
+function openCtx(x, y, rows) {
+  closeCtx();
+  const m = document.createElement('div');
+  m.id = 'ctx'; m.className = 'ctx'; m.setAttribute('role', 'menu');
+  m.innerHTML = rows.map((r, i) => `<button type="button" role="menuitem" data-i="${i}"><i class="fa-solid ${r.icon}"></i><span>${esc(r.label)}</span></button>`).join('');
+  document.body.appendChild(m);
+  const w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(8, Math.min(x, innerWidth - w - 8)) + 'px';
+  m.style.top = Math.max(8, Math.min(y, innerHeight - h - 8)) + 'px';
+  m.addEventListener('click', (e) => { const b = e.target.closest('button[data-i]'); if (!b) return; closeCtx(); rows[+b.dataset.i].run(); });
+  m.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+['mousedown', 'wheel'].forEach((ev) => window.addEventListener(ev, (e) => { if (e.target.closest && e.target.closest('#ctx')) return; closeCtx(); }, true));
+['blur', 'resize'].forEach((ev) => window.addEventListener(ev, closeCtx));
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCtx(); });
+function toggleSecret(sec) {
+  S.secret[sec] = !S.secret[sec];
+  lsSet('console-secret:' + (S.user ? S.user.id : ''), JSON.stringify(S.secret));
+  if (S.selected) S.selected = null;
+  renderDetail();
+  if (S.section === sec) { renderNav(); renderHead(); renderList(); $('#list').scrollTop = 0; runSwap(); } else go(sec);
+}
+$('#nav').addEventListener('contextmenu', (e) => {
+  const b = e.target.closest('button[data-sec]');
+  if (!b || !SECRET[b.dataset.sec] || !S.vault) return;
+  e.preventDefault();
+  const sec = b.dataset.sec, on = !!S.secret[sec];
+  openCtx(e.clientX, e.clientY, [on
+    ? { label: SEC[sec].label, icon: SEC[sec].icon, run: () => toggleSecret(sec) }
+    : { label: SECRET[sec].label, icon: 'fa-lock-open', run: () => toggleSecret(sec) }]);
+});
+
 function openEngDialog() {
   closeDialog();
   const n = Object.keys((S.meta && S.meta.dates) || {}).length;
@@ -1900,6 +1992,10 @@ function openEngDialog() {
     <div class="eng-list">
       <button class="ghost" data-e="export"><i class="fa-solid fa-file-arrow-down"></i>Export Dates</button>
       <button class="ghost" data-e="import"><i class="fa-solid fa-file-arrow-up"></i>Import Dates</button>
+    </div>
+    <div class="eng-sec dlg-drive">
+      <p class="eng-cap">Menu Sections</p>
+      ${GROUPS.map((g) => `<label class="chk"><input type="checkbox" data-grp="${g.id}" ${S.hideGroups.includes(g.id) ? '' : 'checked'}><span>${esc(g.label)}</span></label>`).join('')}
     </div>
     <p class="eng-note">Export saves every date you changed. Import puts them back by file path, so it also works after a new build or on another device.</p>
     <input type="file" id="engFile" accept=".json,application/json" hidden>
@@ -1923,6 +2019,15 @@ function openEngDialog() {
       toast('Exported ' + out.count + ' dates');
     }
   });
+  d.addEventListener('change', (e) => {
+    const c = e.target.closest && e.target.closest('input[data-grp]');
+    if (!c) return;
+    const set = new Set(S.hideGroups);
+    if (c.checked) set.delete(c.dataset.grp); else set.add(c.dataset.grp);
+    S.hideGroups = [...set];
+    lsSet('console-hide:' + (S.user ? S.user.id : ''), JSON.stringify(S.hideGroups));
+    if (SEC[S.section] && SEC[S.section].group && S.hideGroups.includes(SEC[S.section].group)) go('home'); else { renderNav(); renderList(); }
+  });
   $('#engFile').addEventListener('change', async (e) => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
@@ -1937,7 +2042,7 @@ function openEngDialog() {
       closeDialog();
       renderAll();
       toast('Imported ' + n2 + ' dates' + (skipped ? ', skipped ' + skipped : ''));
-    } catch (err) { toast('That is not a dates file'); }
+    } catch (err) { warn('That is not a dates file'); }
   });
 }
 
@@ -2035,7 +2140,7 @@ detailEl.addEventListener('click', (e) => {
     case 'vfs': { const box = $('#vbox'); if (box && box.requestFullscreen) box.requestFullscreen().catch(() => {}); break; }
     case 'stamp': insertStamp(); break;
     case 'open-file': openFile(it); break;
-    case 'copy-path': copyText(S.name + '/' + it.path).then((ok) => toast(ok ? 'Path copied' : 'Could not copy')); break;
+    case 'copy-path': copyText(S.name + '/' + it.path).then((ok) => (ok ? 0 : warn('Could not copy'))); break;
     case 'close-detail': setDetailOpen(false); break;
     default: break;
   }
@@ -2134,7 +2239,7 @@ $('#fallback').addEventListener('change', async (e) => {
   if (!files.length) return;
   S.handle = null; S.desk = null;
   S.source = 'local'; S.drive = null;
-  lsSet('console-source', '{"type":"local"}');
+  lsSet(srcKey(), '{"type":"local"}');
   setScanning(true, 'Reading folder…');
   const root = files[0].webkitRelativePath.split('/')[0];
   const entries = [];
@@ -2155,16 +2260,16 @@ document.addEventListener('drop', async (e) => {
   if (DESK) {
     const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
     const p = f ? DESK.pathOf(f) : '';
-    if (!p) { toast('Drop a folder'); return; }
+    if (!p) { warn('Drop a folder'); return; }
     openDesk(p).catch(() => {});
     return;
   }
   const item = e.dataTransfer && e.dataTransfer.items && e.dataTransfer.items[0];
-  if (!item || !item.getAsFileSystemHandle) { toast('Dropping a folder works in Chrome and Edge'); return; }
+  if (!item || !item.getAsFileSystemHandle) { warn('Dropping a folder works in Chrome and Edge'); return; }
   try {
     const h = await item.getAsFileSystemHandle();
     if (h && h.kind === 'directory') { await idb.set('handle', h); S.saved = h; await openHandle(h); }
-    else toast('Drop a folder, not a file');
+    else warn('Drop a folder, not a file');
   } catch (err) { console.error(err); }
 });
 
@@ -2302,7 +2407,7 @@ function showReconnect() {
   b.addEventListener('click', async () => {
     b.disabled = true;
     try { await gdToken(true); location.reload(); }
-    catch (e) { toast(e.message || 'Could not reconnect'); b.disabled = false; }
+    catch (e) { warn(e.message || 'Could not reconnect'); b.disabled = false; }
   });
   document.body.appendChild(b);
 }
@@ -2452,7 +2557,7 @@ async function openDrive(id, interactive, quiet, fresh) {
       if (!gdValid() && !GD.dead) { try { await gdToken(false); } catch (e) { GD.dead = true; } }
       await ensureSW();
       S.handle = null; S.desk = null; S.source = 'drive'; S.drive = { id, name: cached.name };
-      lsSet('console-source', JSON.stringify({ type: 'drive', id, name: cached.name }));
+      lsSet(srcKey(), JSON.stringify({ type: 'drive', id, name: cached.name }));
       const entries = cached.entries.map((e) => ({ path: e.path, name: e.name, file: new DriveFile(e.m) }));
       await loadVault(entries, cached.name, 'g:' + id);
       if (GD.dead) showReconnect(); else refreshDriveInBackground(id, cached);
@@ -2472,7 +2577,7 @@ async function openDrive(id, interactive, quiet, fresh) {
     if (!entries.length) throw new Error(await gdWhyEmpty(id));
     S.handle = null; S.desk = null; S.source = 'drive'; S.drive = { id, name: meta.name };
     gdFetch(GD_API + '/drive/v3/about?fields=user(emailAddress)').then((r) => r.json()).then((j) => { if (j.user && j.user.emailAddress) lsSet('console-gmail', j.user.emailAddress); }).catch(() => {});
-    lsSet('console-source', JSON.stringify({ type: 'drive', id, name: meta.name }));
+    lsSet(srcKey(), JSON.stringify({ type: 'drive', id, name: meta.name }));
     idb.set('dlist:' + id, { name: meta.name, sig: gdSig(entries), entries: gdPack(entries) });
     await loadVault(entries, meta.name, 'g:' + id);
   } catch (e) {
@@ -2481,7 +2586,7 @@ async function openDrive(id, interactive, quiet, fresh) {
     renderList();
     const msg = e.message === 'Google session ended' ? 'Google session ended. Press Connect to sign in again' : (e.message || 'Could not open Google Drive');
     if (isLocked()) openSourceDialog(true, (e.needsClick || (quiet && e.quiet)) ? 'Sign in to Google to open your library' : msg);
-    else if (!quiet) toast(msg);
+    else if (!quiet) warn(msg);
     throw e;
   } finally { clearTimeout(dog); }
 }
@@ -2499,12 +2604,11 @@ function openSourceDialog(required, note) {
     <div class="dlg-h"><div><h3>Choose Source</h3>${required ? '<p class="dlg-sub">Where are your files? You can change this later.</p>' : ''}</div>${required ? '' : '<button class="iconbtn sm" data-d="close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>'}</div>
     <div class="dlg-opts">
       <button class="ghost" data-d="local"><i class="fa-solid fa-computer"></i>This Computer</button>
-      <button class="ghost ${S.source === 'drive' || gdClientId() ? 'on' : ''}" data-d="drive"><i class="fa-brands fa-google-drive"></i>Google Drive</button>
+      <button class="ghost ${S.source === 'drive' || (!DESK && gdClientId()) ? 'on' : ''}" data-d="drive"><i class="fa-brands fa-google-drive"></i>Google Drive</button>
     </div>
-    <div class="slide ${S.source === 'drive' || gdClientId() ? 'open' : ''}" id="dgWrap" ${S.source === 'drive' || gdClientId() ? '' : 'inert'}><div class="dlg-drive" id="dgForm">
+    <div class="slide ${S.source === 'drive' || (!DESK && gdClientId()) ? 'open' : ''}" id="dgWrap" ${S.source === 'drive' || (!DESK && gdClientId()) ? '' : 'inert'}><div class="dlg-drive" id="dgForm">
       <label>Folder Link<input id="dgLink" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://drive.google.com/drive/folders/…" value="${esc(link)}" autocomplete="off"></label>
-      <label>OAuth Client ID<input id="dgClient" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="123456789-abc.apps.googleusercontent.com" value="${esc(gdClientId())}" autocomplete="off"></label>
-      ${DESK ? `<label>OAuth Client Secret<input id="dgSecret" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="${S.deskG && S.deskG.hasSecret ? '•••••••• saved' : 'GOCSPX-…'}" autocomplete="off"></label>` : ''}
+      ${DESK ? '' : `<label>OAuth Client ID<input id="dgClient" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="123456789-abc.apps.googleusercontent.com" value="${esc(gdClientId())}" autocomplete="off"></label>`}
       <p class="dlg-hint">The console only reads your files (read-only access).</p>
       <p class="auth-err" id="dgErr" ${note ? '' : 'hidden'}>${esc(note || '')}</p>
       <button class="primary" data-d="connect"><i class="fa-brands fa-google-drive"></i>Connect</button>
@@ -2536,18 +2640,11 @@ function openSourceDialog(required, note) {
       setTimeout(() => { const l = $('#dgLink'); if (l && !l.value) l.focus(); }, 380);
     }
     else if (act === 'connect') {
-      const cid = $('#dgClient').value.trim().replace(/\s+/g, '').replace(/[\u200b-\u200d\ufeff]/g, '');
+      const cid = DESK ? 'built-in' : $('#dgClient').value.trim().replace(/\s+/g, '').replace(/[\u200b-\u200d\ufeff]/g, '');
       const id = gdFolderId($('#dgLink').value);
-      if (!cid) { toast('Paste your OAuth Client ID'); return; }
-      if (!id) { toast('Paste the link of a Google Drive folder'); return; }
-      if (DESK) {
-        const sec = $('#dgSecret').value.trim();
-        if (!sec && !(S.deskG && S.deskG.hasSecret)) { toast('Paste your OAuth Client Secret'); return; }
-        lsSet('console-gclient', cid);
-        b.disabled = true;
-        DESK.google.saveClient(cid, sec).then((st) => { S.deskG = st; closeDialog(); openDrive(id, 'pick').catch(() => {}); }, () => { b.disabled = false; toast('Could not save the key'); });
-        return;
-      }
+      if (!cid) { warn('Paste your OAuth Client ID'); return; }
+      if (!id) { warn('Paste the link of a Google Drive folder'); return; }
+      if (DESK) { b.disabled = true; closeDialog(); openDrive(id, 'pick').catch(() => {}); return; }
       lsSet('console-gclient', cid);
       b.disabled = true;
       closeDialog();
@@ -2617,9 +2714,9 @@ function showAuth() {
         <form class="dlg-drive" id="authForm" novalidate>
           <div class="xtra"><div class="two"><label>First Name<input id="aFirst" type="text" placeholder="Dean" autocomplete="given-name" maxlength="40"></label><label>Last Name<input id="aLast" type="text" placeholder="Jane" autocomplete="family-name" maxlength="40"></label></div></div>
           <label>Nickname<input id="aNick" type="text" placeholder="@DeanJane" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="25"></label>
-          <label>Password<input id="aPass" type="password" autocomplete="current-password"></label>
-          <div class="xtra"><div><label>Confirm Password<input id="aPass2" type="password" autocomplete="new-password"></label></div></div>
-          ${chk('aRem', 'Remember Me', true)}
+          <label>Password<input id="aPass" type="password" placeholder="Password" autocomplete="current-password"></label>
+          <div class="xtra"><div><label>Confirm Password<input id="aPass2" type="password" placeholder="Password" autocomplete="new-password"></label></div></div>
+          <div class="xtra xin open"><div>${chk('aRem', 'Remember Me', false)}</div></div>
           <p class="auth-err" id="authErr" hidden></p>
           <button class="primary" type="submit" id="authGo"></button>
         </form>
@@ -2633,13 +2730,18 @@ function showAuth() {
       $('#aTitle').textContent = up ? 'Create Your Profile' : 'Welcome Back';
       $('#aSub').textContent = up ? 'Stored only on this device.' : 'Sign in to open your console.';
       d.querySelectorAll('.atabs button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
-      d.querySelectorAll('.xtra').forEach((x) => { x.classList.toggle('open', up); if (up) x.removeAttribute('inert'); else x.setAttribute('inert', ''); });
+      d.querySelectorAll('.xtra').forEach((x) => { const on = x.classList.contains('xin') ? !up : up; x.classList.toggle('open', on); if (on) x.removeAttribute('inert'); else x.setAttribute('inert', ''); });
       $('#aPass').autocomplete = up ? 'new-password' : 'current-password';
       $('#authGo').textContent = up ? 'Create Account' : 'Sign In';
       const e = $('#authErr'); e.hidden = true;
       if (first || !up) $('#aNick').focus(); else $('#aFirst').focus();
     };
-    const err = (m) => { const e = $('#authErr'); e.textContent = m; e.hidden = !m; };
+    const err = (m) => { if (m) warn(m); };
+    /* only latin letters, digits and punctuation: no Cyrillic in the sign-in fields */
+    d.addEventListener('input', (e) => {
+      const t = e.target;
+      if (t && t.matches && t.matches('input[type=text],input[type=password]') && /[\u0400-\u052F]/.test(t.value)) { const p = t.selectionStart; t.value = t.value.replace(/[\u0400-\u052F]/g, ''); try { t.setSelectionRange(p - 1, p - 1); } catch (x) { /* ignore */ } if (t.id === 'aNick') fixNick(t); }
+    });
     d.addEventListener('click', (e) => {
       const b = e.target.closest('[data-m]');
       if (b && b.dataset.m !== mode) setMode(b.dataset.m);
@@ -2647,7 +2749,7 @@ function showAuth() {
     d.addEventListener('submit', async (e) => {
       e.preventDefault();
       const go = $('#authGo');
-      const nick = nickVal($('#aNick')), pass = $('#aPass').value, rem = $('#aRem').checked;
+      const nick = nickVal($('#aNick')), pass = $('#aPass').value, rem = mode === 'in' && $('#aRem').checked;
       const users = getUsers();
       go.disabled = true;
       try {
@@ -2684,12 +2786,24 @@ function showAuth() {
 /* after sign-in: open the saved library, or ask where the files are */
 async function enterApp(user) {
   S.user = user;
+  try { S.secret = JSON.parse(lsGet('console-secret:' + user.id, '{}')) || {}; S.hideGroups = JSON.parse(lsGet('console-hide:' + user.id, '[]')) || []; } catch (e) { S.secret = {}; S.hideGroups = []; }
   applyProfile();
   setScanning(true, 'Signing you in…');
   await sleep(350);
   setStatus('Preparing your workspace…');
   let src = null;
-  try { src = JSON.parse(lsGet('console-source', 'null')); } catch (e) { /* ignore */ }
+  try {
+    /* one-time: the folder saved before profiles had their own belongs to the first account */
+    const old = lsGet('console-source', null);
+    if (old !== null) {
+      const first = getUsers()[0];
+      if (first && first.id === user.id && lsGet(srcKey(), null) === null) lsSet(srcKey(), old);
+      if (first && first.id === user.id) { try { localStorage.removeItem('console-source'); } catch (e) { /* ignore */ } }
+    }
+    const pend = lsGet('console-source-setup', null);
+    if (pend !== null && lsGet(srcKey(), null) === null) { lsSet(srcKey(), pend); try { localStorage.removeItem('console-source-setup'); } catch (e) { /* ignore */ } }
+  } catch (e) { /* ignore */ }
+  try { src = JSON.parse(lsGet(srcKey(), 'null')); } catch (e) { /* ignore */ }
   if (src && src.type === 'drive' && src.id) {
     S.source = 'drive'; S.drive = { id: src.id, name: src.name || 'Google Drive' };
     try { await openDrive(src.id, false, true); return; } catch (e) { return; } /* openDrive reopens the chooser on failure */
@@ -2723,9 +2837,9 @@ async function continueSaved() {
   if (!h) return;
   try {
     const p = await h.requestPermission({ mode: 'read' });
-    if (p !== 'granted') { toast('No access to the folder'); return; }
+    if (p !== 'granted') { warn('No access to the folder'); return; }
     await openHandle(h);
-  } catch (e) { console.error(e); toast('Could not open the folder'); }
+  } catch (e) { console.error(e); warn('Could not open the folder'); }
 }
 
 /* The browser only lets a page re-open a saved folder after a user gesture.
@@ -2761,7 +2875,7 @@ async function boot1() {
       const d = JSON.parse(atob(m[1]));
       if (d.c && d.f) {
         lsSet('console-gclient', String(d.c));
-        lsSet('console-source', JSON.stringify({ type: 'drive', id: String(d.f), name: 'Google Drive' }));
+        lsSet('console-source-setup', JSON.stringify({ type: 'drive', id: String(d.f), name: 'Google Drive' }));
       }
       history.replaceState(null, '', location.pathname + location.search);
     }
