@@ -41,7 +41,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .brand i{font-size:14px;flex:0 0 auto}
 .brand-t{display:block;font-size:14px}
 .nav{display:flex;flex-direction:column;gap:4px}
-.nav-h{margin:20px 0 6px;padding:0;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.nav-h{margin:20px 0 6px;padding:0 12px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 .nav-h:first-child{margin-top:0}
 .nav button{
   display:flex;align-items:center;gap:12px;width:100%;padding:9px 12px;border-radius:8px;
@@ -102,7 +102,6 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .row .lead.cv .rowplay{width:28px;height:28px;font-size:10px}
 .row .t{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 0}
 .row .t b{font-weight:500;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row.now .t b{font-weight:600}
 .row .t small{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row .dur{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
 .row .star{width:40px;height:40px;margin-right:6px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:14px;border-radius:10px}
@@ -581,7 +580,7 @@ body.no-detail .detail{display:none}
 /* player: one row at every width. When it gets narrow, things drop out in order so the seek bar keeps a usable length:
    cover, current time, total time, subtitle, and finally the title. The volume is a small vertical slider above its icon. */
 .player{flex-wrap:nowrap}
-.p-left{flex:0 1 200px}
+.p-left{flex:0 1 clamp(200px,30cqw,340px)}
 .p-seek input[type=range]{min-width:80px}
 .p-vol{position:relative;display:flex}
 .p-pop{position:absolute;bottom:100%;left:50%;padding-bottom:10px;transform:translate(-50%,8px);opacity:0;visibility:hidden;z-index:40;transition:opacity .18s ease,transform .18s ease,visibility 0s .18s}
@@ -589,16 +588,16 @@ body.no-detail .detail{display:none}
 .p-popbox{padding:8px 11px;border:1px solid var(--line2);border-radius:12px;background:var(--bg);box-shadow:var(--shadow)}
 .p-popbox input[type=range]{display:block;writing-mode:vertical-lr;direction:rtl;width:4px;height:92px;flex:none;min-width:0;background:linear-gradient(to top,var(--text) var(--p,0%),var(--baroff) var(--p,0%))}
 @container (max-width:700px){
-  .p-left{flex:0 1 160px}
+  .p-left{flex:0 1 215px}
 }
 @container (max-width:620px){
   .p-seek span:first-child{display:none}
-  .p-left{flex:0 1 130px}
+  .p-left{flex:0 1 195px}
 }
 @container (max-width:520px){
   .p-cover{display:none}
   .p-seek span{display:none}
-  .p-left{flex:0 1 100px}
+  .p-left{flex:0 1 150px}
 }
 @container (max-width:440px){
   .p-sub{display:none}
@@ -634,7 +633,7 @@ body.no-detail .detail{display:none}
 
 /* round 9: Home reaches the bottom of the page (level with the folder / theme buttons) */
 .home-main{display:flex;flex-direction:column}
-.home-main .alb-grid{flex:1 1 auto;grid-template-rows:repeat(3,minmax(calc(var(--cv) + 50px),1fr));align-content:stretch}
+.home-main .alb-grid{flex:1 1 auto;grid-template-rows:repeat(3,auto);align-content:space-between}
 .home-side{align-self:stretch}
 @container (max-width:759px){
   .home-main{display:block}
@@ -694,3 +693,126 @@ body{overflow-x:hidden}
 @keyframes ctxin{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
 .eng-sec{display:flex;flex-direction:column;gap:10px;align-items:center}
 .eng-cap{margin:0;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+
+/* ===== round 11 ===== */
+/* fields look like the search field: transparent, thin grey border, nothing changes on focus */
+.dlg-drive input,.dlg-drive input:hover,.dlg-drive input:focus,.dlg-drive input:focus-visible{height:44px;border:1px solid var(--line2);background:transparent;border-radius:12px;outline:none;box-shadow:none;text-align:center;font-size:14px}
+.dlg-drive input::placeholder{text-align:center}
+.search input,.search input:hover,.search input:focus,.search input:focus-visible{outline:none;box-shadow:none;border-color:var(--line2)}
+@media (max-width:700px){.dlg-drive input{font-size:16px}}
+
+/* custom checkbox */
+.dlg-drive label.chk,.chk{position:relative;display:inline-flex;flex-direction:row;align-items:center;gap:10px;cursor:pointer;user-select:none}
+.dlg-drive label.chk input{position:absolute;opacity:0;width:0;height:0;margin:0;padding:0;border:0;pointer-events:none}
+.dlg-drive label.chk input::after{content:none}
+.chk .box{flex:0 0 auto;width:18px;height:18px;border:1px solid var(--line2);border-radius:6px;display:inline-grid;place-items:center;transition:background .15s,border-color .15s}
+.chk .box::after{content:'';width:9px;height:5px;border:2px solid var(--invtext);border-top:0;border-right:0;transform:rotate(-45deg) translate(1px,-1px) scale(0);transition:transform .15s ease}
+.chk:hover .box{border-color:var(--muted)}
+.chk input:checked+.box{background:var(--inv);border-color:var(--inv)}
+.chk input:checked+.box::after{transform:rotate(-45deg) translate(1px,-1px) scale(1)}
+.chk input:focus-visible+.box{outline:2px solid var(--muted);outline-offset:2px}
+.eng-sec{align-items:flex-start}
+
+/* sign in / create account: one centred column */
+.dlg-mark{font-size:34px;margin:0 auto 6px}
+.dlg-box{gap:20px}
+.dlg-drive{gap:12px}
+.dlg-drive label{font-size:10px;letter-spacing:.16em}
+.dlg-h h3{font-size:22px}
+
+/* context menu: marker of the current choice, danger */
+.ctx button.on{color:var(--text)}
+.ctx button .ck{margin-left:auto;font-size:11px;color:var(--text)}
+.ctx button.danger,.ctx button.danger i{color:var(--danger)}
+.ctx hr{border:0;border-top:1px solid var(--line2);margin:5px 4px}
+
+.ask .dlg-box{width:min(380px,100%);text-align:center}
+.ask .dlg-drive input{text-align:left}
+.ask-btns{display:flex;gap:10px}
+.ask-btns>*{flex:1;justify-content:center;height:42px;padding:0;border-radius:10px;font-size:14px}
+.primary.danger{background:var(--danger);color:#fff}
+
+/* ===== round 12 ===== */
+/* warning: red background, white text */
+.toast{background:#d93a35;color:#fff;border:0;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+
+/* checkbox: a plain circle that fills in */
+.chk .box{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--line2);position:relative}
+.chk .box::after{content:'';position:absolute;inset:3px;width:auto;height:auto;border:0;border-radius:50%;background:var(--inv);transform:scale(0);transition:transform .18s ease}
+.chk input:checked+.box{background:transparent;border-color:var(--text)}
+.chk input:checked+.box::after{transform:scale(1)}
+
+/* sign in / create account */
+.dlg.solid .authbox,.authbox{width:min(380px,100%);padding:38px 32px 30px;border:1px solid var(--line2);border-radius:26px;background:var(--bg);gap:0;align-items:stretch}
+.auth-badge{align-self:center;width:62px;height:62px;border-radius:50%;border:1px solid var(--line2);display:grid;place-items:center;font-size:26px;margin-bottom:20px}
+.authbox .dlg-h{margin-bottom:24px}
+.authbox .dlg-h h3{font-size:21px;letter-spacing:-.01em}
+.authbox .dlg-sub{margin-top:6px;font-size:13px}
+.authbox .dlg-drive{gap:10px}
+.authbox .fld{position:relative}
+.authbox .fld>i{position:absolute;left:17px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--muted);pointer-events:none}
+.authbox .dlg-drive input,.authbox .dlg-drive input:focus{height:48px;text-align:left;padding:0 16px 0 44px;border-radius:14px;font-size:14px}
+.authbox .dlg-drive input::placeholder{text-align:left}
+.authbox .two{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding-bottom:10px}
+.authbox .two input{padding:0 16px}
+.authbox .xtra>div{padding-bottom:0}
+.authbox .xin>div{display:flex;justify-content:flex-start;padding:4px 4px 0}
+.authbox #authGo{height:48px;margin-top:8px;border-radius:14px;font-size:14px}
+.auth-swap{margin:22px 0 0;text-align:center;font-size:13px;color:var(--muted)}
+.auth-swap button{margin-left:6px;padding:0;border:0;background:none;font:inherit;font-weight:600;color:var(--text);cursor:pointer}
+.auth-swap button:hover{text-decoration:underline}
+
+/* list: selected row is only highlighted, its title stays regular */
+
+/* player: the buttons sit in the middle of the space between the title and the time line */
+.p-ctl{flex:1 1 100px;min-width:96px;justify-content:center}
+.p-seek{flex:2 1 120px;position:relative}
+.seek-tip{position:absolute;bottom:calc(100% + 6px);left:0;transform:translateX(-50%);padding:4px 8px;border-radius:7px;background:var(--bg);border:1px solid var(--line2);font-size:11.5px;font-weight:500;color:var(--text);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .1s;box-shadow:var(--shadow);z-index:5}
+.seek-tip.on{opacity:1}
+.authbox .dlg-drive input{width:100%;min-width:0;box-sizing:border-box}
+.authbox .two>input{width:100%}
+.authbox .fld{width:100%}
+
+/* ===== round 13 ===== */
+.row.sel .t b,.row.now .t b,.row.playing .t b{font-weight:500}
+.chk.locked{cursor:not-allowed;opacity:.55}
+.chk.locked .box{border-color:var(--text)}
+
+/* sign in / create account: two panels side by side */
+.authbox.hz,.dlg.solid .authbox.hz{display:grid;grid-template-columns:270px minmax(0,1fr);width:min(800px,100%);padding:0;overflow:hidden;border-radius:28px;text-align:left}
+.auth-side{display:flex;flex-direction:column;justify-content:space-between;gap:28px;padding:38px 32px;background:var(--inv);color:var(--invtext)}
+.auth-side>i{font-size:54px}
+.auth-side b{display:block;font-size:30px;font-weight:600;letter-spacing:-.02em;margin-bottom:8px}
+.auth-side span{display:block;font-size:13px;line-height:1.5;opacity:.65}
+.auth-main{padding:40px 40px 32px;display:flex;flex-direction:column;justify-content:center;min-height:420px}
+.authbox.hz .dlg-h{justify-content:flex-start;text-align:left;margin-bottom:22px}
+.authbox.hz .dlg-h>div{width:auto}
+.authbox.hz .dlg-sub{text-align:left}
+.authbox.hz .auth-swap{text-align:left;margin-top:20px}
+.authbox.hz .auth-swap button{margin-left:6px}
+@media (max-width:760px){
+  .authbox.hz,.dlg.solid .authbox.hz{grid-template-columns:1fr;width:min(420px,100%)}
+  .auth-side{flex-direction:row;align-items:center;padding:20px 24px}
+  .auth-side>i{font-size:30px}
+  .auth-side b{font-size:20px;margin:0}
+  .auth-side span{display:none}
+  .auth-main{padding:26px 24px 24px;min-height:0}
+}
+
+/* folder browser */
+.fb .dlg-box{width:min(460px,100%);text-align:left;align-items:stretch;gap:14px}
+.fb .dlg-h{justify-content:flex-start;text-align:left}
+.fb .atabs{justify-content:flex-start}
+.fb-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-height:24px;font-size:12.5px;color:var(--muted)}
+.fb-crumbs button{border:0;background:none;padding:2px 4px;border-radius:6px;font:inherit;color:inherit;cursor:pointer}
+.fb-crumbs button:hover{color:var(--text);background:var(--hover)}
+.fb-crumbs button:last-child{color:var(--text)}
+.fb-crumbs i{font-size:9px;opacity:.6}
+.fb-list{display:flex;flex-direction:column;gap:2px;height:300px;overflow-y:auto;border:1px solid var(--line2);border-radius:14px;padding:6px}
+.fb-row{display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:0;border-radius:9px;background:none;font:inherit;font-size:14px;color:var(--text);text-align:left;cursor:pointer}
+.fb-row:hover{background:var(--hover)}
+.fb-row>i:first-child{width:18px;text-align:center;color:var(--muted)}
+.fb-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fb-row>i:last-child{font-size:10px;color:var(--muted)}
+.fb-empty{margin:auto;color:var(--muted);font-size:13px;text-align:center;padding:20px}
+.fb .dlg-sub{text-align:left}

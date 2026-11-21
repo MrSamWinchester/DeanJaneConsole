@@ -1069,7 +1069,7 @@ function renderNav() {
   const total = S.items.filter(visibleItem).length;
   Object.keys(SECRET).forEach((k) => { if (S.secret[k]) counts[k] = S.items.filter((i) => !i.hidden && !groupHidden(i) && i.section === k && i.secret === k).length; });
   const num = (id) => (id === 'all' ? total : id === 'video' ? (counts.video || 0) + (counts.lyricvideo || 0) : (counts[id] || 0));
-  const btn = (s) => `<button data-sec="${s.id}" class="${S.section === s.id ? 'on' : ''}"><i class="fa-solid ${s.icon}"></i><span>${secLabel(s)}</span><span class="n">${S.vault ? num(s.id) : ''}</span></button>`;
+  const btn = (s) => `<button data-sec="${s.id}" class="${S.section === s.id ? 'on' : ''}"><i class="fa-solid ${s.icon}"></i><span>${s.label}</span><span class="n">${S.vault ? num(s.id) : ''}</span></button>`;
   let html = '';
   if (SHOW_ALL_IN_MENU) html += btn(SEC.all);
   GROUPS.filter((g) => !S.hideGroups.includes(g.id)).forEach((g) => {
@@ -1111,7 +1111,7 @@ function rowHtml(it) {
   const right = it.kind === 'album' ? it.tracks.length + ' Songs' : durText(it);
   return `<div class="row" data-uid="${it.uid}">
     <div class="lead ${cov ? 'cv' : ''}">
-      ${cov ? `<img class="lead-cover" alt="" src="${cov}">` : `<span class="ico ${playable ? 'has' : ''}"><i class="fa-solid ${iconOf(it)}"></i></span>`}
+      ${cov ? `<img class="lead-cover" alt="" decoding="sync" src="${cov}">` : `<span class="ico ${playable ? 'has' : ''}"><i class="fa-solid ${iconOf(it)}"></i></span>`}
       ${playable ? '<button class="rowplay" data-act="play" aria-label="Play"><i class="fa-solid fa-play"></i></button>' : ''}
     </div>
     <button class="main-btn" data-act="select"><span class="t"><b>${esc(it.title)}</b><small>${esc(sub)}</small></span><span class="dur">${esc(right)}</span></button>
@@ -1622,6 +1622,19 @@ const coverUrl = (img) => {
   return img.url;
 };
 /* Drive covers are downloaded once and kept as blobs, so they never reload when you switch pages */
+/* big covers are scaled down once (900 px is more than any place on screen needs), so every redraw decodes a small picture */
+async function shrinkCover(blob) {
+  try {
+    const bm = await createImageBitmap(blob);
+    const m = Math.max(bm.width, bm.height);
+    if (m <= 900) { if (bm.close) bm.close(); return blob; }
+    const k = 900 / m, cv = document.createElement('canvas');
+    cv.width = Math.round(bm.width * k); cv.height = Math.round(bm.height * k);
+    cv.getContext('2d').drawImage(bm, 0, 0, cv.width, cv.height);
+    if (bm.close) bm.close();
+    return await new Promise((r) => cv.toBlob((b) => r(b || blob), 'image/jpeg', 0.9));
+  } catch (e) { return blob; }
+}
 async function preloadCovers() {
   const covers = new Set();
   S.albums.forEach((i) => { if (i.cover) covers.add(i.cover); });
@@ -1631,16 +1644,16 @@ async function preloadCovers() {
   const worker = async () => {
     while (idx < list.length) {
       const c = list[idx++];
-      const k = 'dcov:' + S.metaKey + ':' + c.file.id;
+      const k = 'dcov2:' + S.metaKey + ':' + c.file.id;
       try {
         if (!c.file.remote) { /* desktop folder: read once, then every redraw uses the same in-memory picture */
-          c.url = URL.createObjectURL(new Blob([await c.file.arrayBuffer()], { type: c.file.type || 'image/jpeg' }));
+          c.url = URL.createObjectURL(await shrinkCover(new Blob([await c.file.arrayBuffer()], { type: c.file.type || 'image/jpeg' })));
           COVER_URLS.set(coverKey(c), c.url);
           continue;
         }
         const rec = await idb.get(k);
         if (rec && rec.blob && rec.mod === c.file.lastModified) { c.url = URL.createObjectURL(rec.blob); COVER_URLS.set(coverKey(c), c.url); continue; }
-        const blob = new Blob([await c.file.arrayBuffer()], { type: c.file.type || 'image/jpeg' });
+        const blob = await shrinkCover(new Blob([await c.file.arrayBuffer()], { type: c.file.type || 'image/jpeg' }));
         c.url = URL.createObjectURL(blob);
         COVER_URLS.set(coverKey(c), c.url);
         idb.set(k, { mod: c.file.lastModified, blob });
@@ -1940,13 +1953,10 @@ function insertStamp() {
 
 /* ================= events ================= */
 $('#homeBtn').addEventListener('click', () => go('home'));
-/* five quick clicks on the logo open the engineering menu */
-let logoTaps = [];
-$('#homeBtn').addEventListener('click', () => {
-  const t = Date.now();
-  logoTaps = logoTaps.filter((x) => t - x < 2200);
-  logoTaps.push(t);
-  if (logoTaps.length >= 5) { logoTaps = []; openEngDialog(); }
+/* right click on the logo opens the engineering menu */
+$('#homeBtn').addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  openCtx(e.clientX, e.clientY, [{ label: 'Engineering', icon: 'fa-screwdriver-wrench', run: openEngDialog }]);
 });
 /* ================= context menu (follows the theme) ================= */
 function closeCtx() { const c = $('#ctx'); if (c) c.remove(); }
@@ -1954,7 +1964,7 @@ function openCtx(x, y, rows) {
   closeCtx();
   const m = document.createElement('div');
   m.id = 'ctx'; m.className = 'ctx'; m.setAttribute('role', 'menu');
-  m.innerHTML = rows.map((r, i) => `<button type="button" role="menuitem" data-i="${i}"><i class="fa-solid ${r.icon}"></i><span>${esc(r.label)}</span></button>`).join('');
+  m.innerHTML = rows.map((r, i) => `<button type="button" role="menuitem" data-i="${i}" class="${r.on ? 'on' : ''}${r.danger ? ' danger' : ''}"><i class="fa-solid ${r.icon}"></i><span>${esc(r.label)}</span>${r.on ? '<i class="fa-solid fa-check ck"></i>' : ''}</button>`).join('');
   document.body.appendChild(m);
   const w = m.offsetWidth, h = m.offsetHeight;
   m.style.left = Math.max(8, Math.min(x, innerWidth - w - 8)) + 'px';
@@ -1977,9 +1987,143 @@ $('#nav').addEventListener('contextmenu', (e) => {
   if (!b || !SECRET[b.dataset.sec] || !S.vault) return;
   e.preventDefault();
   const sec = b.dataset.sec, on = !!S.secret[sec];
-  openCtx(e.clientX, e.clientY, [on
-    ? { label: SEC[sec].label, icon: SEC[sec].icon, run: () => toggleSecret(sec) }
-    : { label: SECRET[sec].label, icon: 'fa-lock-open', run: () => toggleSecret(sec) }]);
+  const pick = (want) => () => { if (!!S.secret[sec] !== want) toggleSecret(sec); else go(sec); };
+  openCtx(e.clientX, e.clientY, [
+    { label: SEC[sec].label, icon: SEC[sec].icon, on: !on, run: pick(false) },
+    { label: SECRET[sec].label, icon: SEC[sec].icon, on: on, run: pick(true) }
+  ]);
+});
+
+/* ================= file actions: rename, show in folder / open in browser, delete ================= */
+const FILE_ILLEGAL = /[\\/:*?"<>|\x00-\x1f]/;
+const canEditFiles = () => !!((DESK && S.desk) || (S.source === 'drive' && S.drive));
+const revealLabel = () => (DESK && DESK.platform === 'darwin' ? 'Show in Finder' : DESK && DESK.platform === 'win32' ? 'Show in Explorer' : 'Show in Folder');
+
+/* a small question window in the style of the others; resolves with the typed text (or true), or null when cancelled */
+function askDialog({ title, sub, value, ok, danger, input }) {
+  return new Promise((resolve) => {
+    closeDialog();
+    const d = document.createElement('div');
+    d.className = 'dlg ask'; d.id = 'dlg';
+    d.innerHTML = `<div class="dlg-box" role="dialog" aria-label="${esc(title)}">
+      <div class="dlg-h"><div><h3>${esc(title)}</h3>${sub ? `<p class="dlg-sub">${esc(sub)}</p>` : ''}</div></div>
+      ${input ? `<form class="dlg-drive" id="askF"><input id="askI" type="text" value="${esc(value || '')}" spellcheck="false" autocomplete="off" maxlength="200"></form>` : ''}
+      <div class="ask-btns"><button type="button" class="ghost" data-a="no">Cancel</button><button type="button" class="primary${danger ? ' danger' : ''}" data-a="ok">${esc(ok || 'OK')}</button></div>
+    </div>`;
+    document.body.appendChild(d);
+    const done = (v) => { document.removeEventListener('keydown', onKey, true); d.remove(); resolve(v); };
+    const submit = () => done(input ? $('#askI').value : true);
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(null); } else if (e.key === 'Enter' && !input) { e.preventDefault(); submit(); } };
+    document.addEventListener('keydown', onKey, true);
+    d.addEventListener('click', (e) => { if (e.target === d) done(null); const b = e.target.closest('[data-a]'); if (b) (b.dataset.a === 'ok' ? submit() : done(null)); });
+    if (input) { $('#askF').addEventListener('submit', (e) => { e.preventDefault(); submit(); }); const i = $('#askI'); i.focus(); i.select(); }
+  });
+}
+
+/* Drive needs full access for changes: asked once, after you agree */
+async function gdWriteReady() {
+  if (DESK) {
+    const st = await DESK.google.status();
+    if (st && st.write) return true;
+    const yes = await askDialog({ title: 'Allow Changes on Google Drive?', sub: 'To rename or delete files, Google will ask once for full access to your Drive.', ok: 'Allow' });
+    if (!yes) return false;
+    await DESK.google.upgrade();
+    GD.token = null; GD.exp = 0;
+    try { await gdToken(true); } catch (e) { warn(e.message || 'Could not get access'); return false; }
+    return true;
+  }
+  if (lsGet('console-gd-write', '') === '1' && GD.wrote) return true;
+  const yes = await askDialog({ title: 'Allow Changes on Google Drive?', sub: 'To rename or delete files, Google will ask once for full access to your Drive.', ok: 'Allow' });
+  if (!yes) return false;
+  lsSet('console-gd-write', '1');
+  GD.token = null; GD.exp = 0; GD.consent = true;
+  try { sessionStorage.removeItem('console-gtoken'); } catch (e) { /* ignore */ }
+  try { await gdToken(true); GD.wrote = true; } catch (e) { warn(e.message || 'Could not get access'); return false; } finally { GD.consent = false; }
+  return true;
+}
+
+function movePathMeta(from, to) {
+  ['favs', 'notes', 'dates'].forEach((k) => { const m = S.meta[k]; if (m && m[from] !== undefined) { m[to] = m[from]; delete m[from]; } });
+  S.meta.history = (S.meta.history || []).map((p) => (p === from ? to : p));
+  if (S.meta.last === from) S.meta.last = to;
+  saveMeta();
+}
+function stopIfPlaying(it) { if (S.now && it && (S.now === it || S.now.path === it.path)) { try { audio.pause(); } catch (e) { /* ignore */ } } }
+async function afterFileChange() {
+  S.selected = null;
+  await refresh();
+  renderAll();
+  renderDetail();
+}
+async function fileRename(it) {
+  const name = it.file.name;
+  const dot = name.lastIndexOf('.');
+  const ext = dot > 0 ? name.slice(dot) : '';
+  const base = dot > 0 ? name.slice(0, dot) : name;
+  const v = await askDialog({ title: 'Rename', sub: ext ? 'The extension ' + ext + ' stays.' : '', value: base, ok: 'Rename', input: true });
+  if (v === null) return;
+  const nn = String(v).trim();
+  if (!nn || FILE_ILLEGAL.test(nn) || /[. ]$/.test(nn)) { warn('That name cannot be used'); return; }
+  const full = nn + ext;
+  if (full === name) return;
+  stopIfPlaying(it);
+  try {
+    if (DESK && S.desk) {
+      const r = await DESK.file.rename(it.file.rel, full);
+      if (!r || !r.ok) { warn((r && r.message) || 'Could not rename'); return; }
+    } else {
+      if (!(await gdWriteReady())) return;
+      await gdFetch(GD_API + '/drive/v3/files/' + it.file.id + '?supportsAllDrives=true', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: full }) });
+    }
+    const d = it.path.lastIndexOf('/');
+    movePathMeta(it.path, (d >= 0 ? it.path.slice(0, d + 1) : '') + full);
+    await afterFileChange();
+  } catch (e) { warn(e.status === 403 ? 'Google Drive did not allow the change' : (e.message || 'Could not rename')); }
+}
+async function fileDelete(it) {
+  const drv = !(DESK && S.desk);
+  const yes = await askDialog({ title: 'Delete "' + it.file.name + '"?', sub: drv ? 'It moves to the Trash of your Google Drive.' : 'It moves to the Recycle Bin.', ok: 'Delete', danger: true });
+  if (!yes) return;
+  stopIfPlaying(it);
+  try {
+    if (!drv) {
+      const r = await DESK.file.remove(it.file.rel);
+      if (!r || !r.ok) { warn((r && r.message) || 'Could not delete'); return; }
+    } else {
+      if (!(await gdWriteReady())) return;
+      await gdFetch(GD_API + '/drive/v3/files/' + it.file.id + '?supportsAllDrives=true', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashed: true }) });
+    }
+    await afterFileChange();
+  } catch (e) { warn(e.status === 403 ? 'Google Drive did not allow the change' : (e.message || 'Could not delete')); }
+}
+function fileOpenOnline(it) {
+  const f = it.file;
+  const u = f.isDoc ? 'https://docs.google.com/document/d/' + f.id + '/edit' : 'https://drive.google.com/file/d/' + f.id + '/view';
+  if (DESK) DESK.openUrl(u); else window.open(u, '_blank', 'noopener');
+}
+function fileMenuRows(it) {
+  if (!it || !canEditFiles()) return [];
+  const rows = [];
+  if (it.kind === 'album') {
+    if (DESK && S.desk) rows.push({ label: revealLabel(), icon: 'fa-folder-open', run: () => DESK.file.reveal(it.path) });
+    return rows;
+  }
+  if (!it.file) return rows;
+  rows.push({ label: 'Rename', icon: 'fa-pen', run: () => fileRename(it) });
+  if (DESK && S.desk) rows.push({ label: revealLabel(), icon: 'fa-folder-open', run: () => DESK.file.reveal(it.file.rel) });
+  else rows.push({ label: 'Open in Browser', icon: 'fa-arrow-up-right-from-square', run: () => fileOpenOnline(it) });
+  rows.push({ label: 'Delete', icon: 'fa-trash', danger: true, run: () => fileDelete(it) });
+  return rows;
+}
+document.addEventListener('contextmenu', (e) => {
+  const t = e.target.closest && e.target.closest('.row,.track,.rrow,.alb');
+  if (!t || !S.vault) return;
+  const uid = +(t.dataset.uid || t.dataset.open || t.dataset.pick);
+  const it = S.byUid.get(uid);
+  const rows = fileMenuRows(it);
+  if (!rows.length) return;
+  e.preventDefault();
+  openCtx(e.clientX, e.clientY, rows);
 });
 
 function openEngDialog() {
@@ -1995,7 +2139,7 @@ function openEngDialog() {
     </div>
     <div class="eng-sec dlg-drive">
       <p class="eng-cap">Menu Sections</p>
-      ${GROUPS.map((g) => `<label class="chk"><input type="checkbox" data-grp="${g.id}" ${S.hideGroups.includes(g.id) ? '' : 'checked'}><span>${esc(g.label)}</span></label>`).join('')}
+      ${GROUPS.map((g) => `<label class="chk${g.id === 'music' ? ' locked' : ''}"><input type="checkbox" data-grp="${g.id}" ${S.hideGroups.includes(g.id) ? '' : 'checked'} ${g.id === 'music' ? 'disabled' : ''}><i class="box"></i><span>${esc(g.label)}</span></label>`).join('')}
     </div>
     <p class="eng-note">Export saves every date you changed. Import puts them back by file path, so it also works after a new build or on another device.</p>
     <input type="file" id="engFile" accept=".json,application/json" hidden>
@@ -2021,7 +2165,7 @@ function openEngDialog() {
   });
   d.addEventListener('change', (e) => {
     const c = e.target.closest && e.target.closest('input[data-grp]');
-    if (!c) return;
+    if (!c || c.dataset.grp === 'music') return;
     const set = new Set(S.hideGroups);
     if (c.checked) set.delete(c.dataset.grp); else set.add(c.dataset.grp);
     S.hideGroups = [...set];
@@ -2189,6 +2333,22 @@ $('#pclose').addEventListener('click', () => {
 const pseek = $('#pseek');
 pseek.addEventListener('pointerdown', () => { seeking = true; });
 window.addEventListener('pointerup', () => { seeking = false; });
+/* hover over the time line shows the second under the pointer */
+(() => {
+  const tip = $('#stip');
+  const at = (e) => {
+    const r = pseek.getBoundingClientRect(), max = Number(pseek.max) || 0;
+    if (!max) { tip.classList.remove('on'); return; }
+    const x = Math.min(Math.max(e.clientX - r.left, 6), r.width - 6);
+    const t = Math.min(max, Math.max(0, (x - 6) / Math.max(1, r.width - 12) * max));
+    tip.textContent = fmt(Math.round(t));
+    tip.style.left = (r.left - tip.parentElement.getBoundingClientRect().left + x) + 'px';
+    tip.classList.add('on');
+  };
+  pseek.addEventListener('mousemove', at);
+  pseek.addEventListener('mouseleave', () => tip.classList.remove('on'));
+  pseek.addEventListener('mousedown', () => tip.classList.remove('on'));
+})();
 pseek.addEventListener('input', () => { audio.currentTime = Number(pseek.value); setFill(pseek); $('#pcur').textContent = fmt(pseek.value); });
 const pvol = $('#pvol');
 pvol.addEventListener('input', () => { S.vol = Number(pvol.value); S.muted = false; lsSet('vault-vol', String(S.vol)); applyVolume(); setFill(pvol); updateMuteIcon(); });
@@ -2277,6 +2437,8 @@ document.addEventListener('drop', async (e) => {
 /* ================= Google Drive ================= */
 const GD_API = lsGet('console-gapi', 'https://www.googleapis.com');
 const GD_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
+/* full access is requested only after you agree to rename or delete files on Drive */
+const gdScope = () => (lsGet('console-gd-write', '') === '1' ? 'https://www.googleapis.com/auth/drive' : GD_SCOPE);
 const GD_FOLDER = 'application/vnd.google-apps.folder';
 const GD_SHORT = 'application/vnd.google-apps.shortcut';
 const GD_DOC = 'application/vnd.google-apps.document';
@@ -2381,14 +2543,14 @@ function gdToken(interactive) {
       try {
         const tc = google.accounts.oauth2.initTokenClient({
           client_id: cid,
-          scope: GD_SCOPE,
+          scope: gdScope(),
           callback: (r) => {
             if (r && r.access_token) { gdApply(r.access_token, r.expires_in); fin(resolve, GD.token); }
             else fin(reject, new Error(gdMsg(r && r.error, r && (r.error_description || r.error))));
           },
           error_callback: (e) => fin(reject, new Error(gdMsg(e && e.type)))
         });
-        tc.requestAccessToken(interactive === 'pick' ? { prompt: 'select_account' } : Object.assign({ prompt: interactive ? '' : 'none' }, lsGet('console-gmail', '') ? { hint: lsGet('console-gmail', '') } : {}));
+        tc.requestAccessToken(GD.consent ? { prompt: 'consent' } : interactive === 'pick' ? { prompt: 'select_account' } : Object.assign({ prompt: interactive ? '' : 'none' }, lsGet('console-gmail', '') ? { hint: lsGet('console-gmail', '') } : {}));
       } catch (e) { fin(reject, e); }
     });
   })();
@@ -2607,11 +2769,12 @@ function openSourceDialog(required, note) {
       <button class="ghost ${S.source === 'drive' || (!DESK && gdClientId()) ? 'on' : ''}" data-d="drive"><i class="fa-brands fa-google-drive"></i>Google Drive</button>
     </div>
     <div class="slide ${S.source === 'drive' || (!DESK && gdClientId()) ? 'open' : ''}" id="dgWrap" ${S.source === 'drive' || (!DESK && gdClientId()) ? '' : 'inert'}><div class="dlg-drive" id="dgForm">
-      <label>Folder Link<input id="dgLink" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://drive.google.com/drive/folders/…" value="${esc(link)}" autocomplete="off"></label>
       ${DESK ? '' : `<label>OAuth Client ID<input id="dgClient" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="123456789-abc.apps.googleusercontent.com" value="${esc(gdClientId())}" autocomplete="off"></label>`}
-      <p class="dlg-hint">The console only reads your files (read-only access).</p>
+      <p class="dlg-hint">Sign in with Google, then choose any folder. The console only reads your files.</p>
       <p class="auth-err" id="dgErr" ${note ? '' : 'hidden'}>${esc(note || '')}</p>
-      <button class="primary" data-d="connect"><i class="fa-brands fa-google-drive"></i>Connect</button>
+      <button class="primary" data-d="connect"><i class="fa-brands fa-google-drive"></i>Sign In With Google</button>
+      <button class="linkbtn" data-d="uselink" type="button">Or paste a folder link</button>
+      <div class="slide" id="dgLinkWrap" inert><div><label>Folder Link<input id="dgLink" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://drive.google.com/drive/folders/…" value="${esc(link)}" autocomplete="off"></label></div></div>
     </div></div>
     ${required && S.saved ? `<button class="linkbtn" data-d="resume"><i class="fa-solid fa-clock-rotate-left"></i>Continue: ${esc(S.saved.name)}</button>` : ''}
   </div>`;
@@ -2639,19 +2802,101 @@ function openSourceDialog(required, note) {
       if (!DESK) loadGIS().catch(() => {});
       setTimeout(() => { const l = $('#dgLink'); if (l && !l.value) l.focus(); }, 380);
     }
+    else if (act === 'uselink') {
+      const w = $('#dgLinkWrap');
+      w.classList.toggle('open'); if (w.classList.contains('open')) { w.removeAttribute('inert'); setTimeout(() => $('#dgLink').focus(), 380); } else w.setAttribute('inert', '');
+    }
     else if (act === 'connect') {
       const cid = DESK ? 'built-in' : $('#dgClient').value.trim().replace(/\s+/g, '').replace(/[\u200b-\u200d\ufeff]/g, '');
-      const id = gdFolderId($('#dgLink').value);
+      const linkId = gdFolderId($('#dgLink').value);
       if (!cid) { warn('Paste your OAuth Client ID'); return; }
-      if (!id) { warn('Paste the link of a Google Drive folder'); return; }
-      if (DESK) { b.disabled = true; closeDialog(); openDrive(id, 'pick').catch(() => {}); return; }
-      lsSet('console-gclient', cid);
+      if (!DESK) lsSet('console-gclient', cid);
       b.disabled = true;
-      closeDialog();
-      openDrive(id, 'pick').catch(() => {});
+      if (linkId && $('#dgLinkWrap').classList.contains('open')) { closeDialog(); openDrive(linkId, 'pick').catch(() => {}); return; }
+      /* sign in first (straight from the click), then choose the folder inside the console */
+      GD.token = null; GD.dead = false;
+      try { sessionStorage.removeItem('console-gtoken'); } catch (x) { /* ignore */ }
+      gdToken('pick').then(async () => { await ensureSW(); pushToken(); openFolderBrowser(required); })
+        .catch((x) => { b.disabled = false; warn(x.message || 'Could not sign in to Google'); });
     }
   });
   if (!DESK && $('#dgWrap').classList.contains('open')) loadGIS().catch(() => {});
+}
+
+/* ---- choose a folder on Google Drive, after signing in ---- */
+async function gdFolderList(kind, parent) {
+  const out = [];
+  let tok = '';
+  do {
+    const q = kind === 'shared' && !parent
+      ? "sharedWithMe=true and mimeType='" + GD_FOLDER + "' and trashed=false"
+      : "'" + (parent || 'root') + "' in parents and mimeType='" + GD_FOLDER + "' and trashed=false";
+    const u = GD_API + '/drive/v3/files?pageSize=200&orderBy=name&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken,files(id,name)&q=' + encodeURIComponent(q) + (tok ? '&pageToken=' + tok : '');
+    const j = await (await gdFetch(u)).json();
+    (j.files || []).forEach((f) => out.push(f));
+    tok = j.nextPageToken || '';
+  } while (tok);
+  return out;
+}
+async function gdSharedDrives() {
+  try { return (await (await gdFetch(GD_API + '/drive/v3/drives?pageSize=100&fields=drives(id,name)')).json()).drives || []; } catch (e) { return []; }
+}
+async function openFolderBrowser(required) {
+  closeDialog();
+  const d = document.createElement('div');
+  d.className = 'dlg fb' + (required ? ' solid' : ''); d.id = 'dlg';
+  if (required) d.dataset.req = '1';
+  d.innerHTML = `<div class="dlg-box" role="dialog" aria-label="Choose a Folder">
+    <div class="dlg-h"><div><h3>Choose a Folder</h3><p class="dlg-sub">Open the folder with your files and press Choose.</p></div></div>
+    <div class="atabs" id="fbTabs"></div>
+    <div class="fb-crumbs" id="fbCrumbs"></div>
+    <div class="fb-list" id="fbList"></div>
+    <div class="ask-btns"><button type="button" class="ghost" data-f="back">Back</button><button type="button" class="primary" data-f="pick" disabled>Choose This Folder</button></div>
+  </div>`;
+  document.body.appendChild(d);
+  const st = { tab: 'my', stack: [], drives: [], seq: 0 };
+  const tabs = [['my', 'My Drive'], ['shared', 'Shared With Me']];
+  const drawTabs = () => { $('#fbTabs').innerHTML = tabs.map(([k, l]) => `<button type="button" data-t="${k}" class="${st.tab === k ? 'on' : ''}">${l}</button>`).join(''); };
+  const drawCrumbs = () => {
+    const root = tabs.find((t) => t[0] === st.tab)[1];
+    $('#fbCrumbs').innerHTML = [`<button type="button" data-c="-1">${esc(root)}</button>`].concat(st.stack.map((s2, i) => `<i class="fa-solid fa-chevron-right"></i><button type="button" data-c="${i}">${esc(s2.name)}</button>`)).join('');
+    d.querySelector('[data-f="pick"]').disabled = st.tab === 'my' ? false : !st.stack.length;
+  };
+  const load = async () => {
+    const my = ++st.seq, box = $('#fbList');
+    drawTabs(); drawCrumbs();
+    box.innerHTML = '<p class="fb-empty">Loading…</p>';
+    let rows = [];
+    try {
+      if (st.tab === 'drives' && !st.stack.length) rows = st.drives.map((x) => ({ id: x.id, name: x.name, drive: true }));
+      else rows = await gdFolderList(st.tab === 'shared' ? 'shared' : 'my', st.stack.length ? st.stack[st.stack.length - 1].id : '');
+    } catch (e) { if (my === st.seq) box.innerHTML = '<p class="fb-empty">' + esc(e.message || 'Could not read Drive') + '</p>'; return; }
+    if (my !== st.seq) return;
+    box.innerHTML = rows.length ? rows.map((r) => `<button type="button" class="fb-row" data-id="${esc(r.id)}" data-n="${esc(r.name)}"><i class="fa-solid ${r.drive ? 'fa-hard-drive' : 'fa-folder'}"></i><span>${esc(r.name)}</span><i class="fa-solid fa-chevron-right"></i></button>`).join('') : '<p class="fb-empty">No folders here</p>';
+  };
+  gdSharedDrives().then((dr) => { if (dr.length && d.isConnected) { st.drives = dr; tabs.push(['drives', 'Shared Drives']); drawTabs(); } });
+  d.addEventListener('click', (e) => {
+    const t = e.target.closest('[data-t]');
+    if (t) { st.tab = t.dataset.t; st.stack = []; load(); return; }
+    const c = e.target.closest('[data-c]');
+    if (c) { st.stack = st.stack.slice(0, +c.dataset.c + 1); load(); return; }
+    const r = e.target.closest('.fb-row');
+    if (r) { st.stack.push({ id: r.dataset.id, name: r.dataset.n }); load(); return; }
+    const f = e.target.closest('[data-f]');
+    if (!f) return;
+    if (f.dataset.f === 'back') { openSourceDialog(required); return; }
+    if (f.dataset.f === 'pick') {
+      f.disabled = true;
+      (async () => {
+        try {
+          const id = st.stack.length ? st.stack[st.stack.length - 1].id : (await (await gdFetch(GD_API + '/drive/v3/files/root?fields=id')).json()).id;
+          closeDialog();
+          openDrive(id, false, false, true).catch(() => {});
+        } catch (x) { f.disabled = false; warn(x.message || 'Could not open the folder'); }
+      })();
+    }
+  });
+  load();
 }
 function pickFolder() { openSourceDialog(); }
 
@@ -2680,8 +2925,12 @@ function rememberSession(user, remember) {
     (remember ? localStorage : sessionStorage).setItem('console-session', JSON.stringify({ id: user.id }));
   } catch (e) { /* ignore */ }
 }
-function signOut() {
+async function signOut() {
   try { localStorage.removeItem('console-session'); sessionStorage.removeItem('console-session'); } catch (e) { /* ignore */ }
+  try { audio.pause(); } catch (e) { /* ignore */ }
+  setScanning(true, 'Signing out');
+  setStatus('Signing out', true);
+  await sleep(900);
   location.reload();
 }
 const displayName = (u) => (u.preferNick ? '@' + u.nick : (u.first + ' ' + u.last).trim());
@@ -2701,25 +2950,24 @@ function showAuth() {
     const d = document.createElement('div');
     d.className = 'dlg solid'; d.id = 'dlg'; d.dataset.req = '1';
     let mode = 'in';
-    const chk = (id, text, on) => `<label class="chk"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><span>${text}</span></label>`;
+    const chk = (id, text, on) => `<label class="chk"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><i class="box"></i><span>${text}</span></label>`;
     /* built once: switching tabs slides the extra fields open or closed instead of redrawing */
     const build = () => {
-      d.innerHTML = `<div class="dlg-box" role="dialog" aria-label="Account">
-        <i class="fa-brands fa-pied-piper dlg-mark"></i>
+      d.innerHTML = `<div class="dlg-box authbox hz" role="dialog" aria-label="Account">
+        <aside class="auth-side"><i class="fa-brands fa-pied-piper"></i><div><b>Impala</b><span>Your songs, lyrics and notes in one quiet place.</span></div></aside>
+        <section class="auth-main">
         <div class="dlg-h"><div><h3 id="aTitle"></h3><p class="dlg-sub" id="aSub"></p></div></div>
-        <div class="atabs" role="tablist">
-          <button data-m="in" type="button" role="tab">Sign In</button>
-          <button data-m="up" type="button" role="tab">Create Account</button>
-        </div>
         <form class="dlg-drive" id="authForm" novalidate>
-          <div class="xtra"><div class="two"><label>First Name<input id="aFirst" type="text" placeholder="Dean" autocomplete="given-name" maxlength="40"></label><label>Last Name<input id="aLast" type="text" placeholder="Jane" autocomplete="family-name" maxlength="40"></label></div></div>
-          <label>Nickname<input id="aNick" type="text" placeholder="@DeanJane" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="25"></label>
-          <label>Password<input id="aPass" type="password" placeholder="Password" autocomplete="current-password"></label>
-          <div class="xtra"><div><label>Confirm Password<input id="aPass2" type="password" placeholder="Password" autocomplete="new-password"></label></div></div>
+          <div class="xtra"><div class="two"><input id="aFirst" type="text" placeholder="Dean" aria-label="First Name" autocomplete="given-name" maxlength="40"><input id="aLast" type="text" placeholder="Jane" aria-label="Last Name" autocomplete="family-name" maxlength="40"></div></div>
+          <div class="fld"><i class="fa-solid fa-circle-user"></i><input id="aNick" type="text" placeholder="@DeanJane" aria-label="Nickname" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="25"></div>
+          <div class="fld"><i class="fa-solid fa-lock"></i><input id="aPass" type="password" placeholder="Password" aria-label="Password" autocomplete="current-password"></div>
+          <div class="xtra"><div><div class="fld"><i class="fa-solid fa-lock"></i><input id="aPass2" type="password" placeholder="Repeat Password" aria-label="Repeat Password" autocomplete="new-password"></div></div></div>
           <div class="xtra xin open"><div>${chk('aRem', 'Remember Me', false)}</div></div>
           <p class="auth-err" id="authErr" hidden></p>
           <button class="primary" type="submit" id="authGo"></button>
         </form>
+        <p class="auth-swap"><span id="swapTxt"></span><button type="button" id="swapBtn"></button></p>
+        </section>
       </div>`;
       const nick = $('#aNick');
       nick.addEventListener('input', () => fixNick(nick));
@@ -2729,7 +2977,9 @@ function showAuth() {
       const up = m === 'up';
       $('#aTitle').textContent = up ? 'Create Your Profile' : 'Welcome Back';
       $('#aSub').textContent = up ? 'Stored only on this device.' : 'Sign in to open your console.';
-      d.querySelectorAll('.atabs button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
+      $('#swapTxt').textContent = up ? 'Already have an account?' : 'New here?';
+      $('#swapBtn').textContent = up ? 'Sign In' : 'Create Account';
+      $('#swapBtn').dataset.m = up ? 'in' : 'up';
       d.querySelectorAll('.xtra').forEach((x) => { const on = x.classList.contains('xin') ? !up : up; x.classList.toggle('open', on); if (on) x.removeAttribute('inert'); else x.setAttribute('inert', ''); });
       $('#aPass').autocomplete = up ? 'new-password' : 'current-password';
       $('#authGo').textContent = up ? 'Create Account' : 'Sign In';
@@ -2754,7 +3004,7 @@ function showAuth() {
       go.disabled = true;
       try {
         if (mode === 'in') {
-          const u = users.find((x) => x.nick.toLowerCase() === nick.toLowerCase());
+          const u = users.find((x) => x.nick === nick);
           if (!nick || !pass) throw new Error('Enter your nickname and password');
           if (!u || (await hashPw(pass, u.salt)) !== u.hash) throw new Error('Wrong nickname or password');
           rememberSession(u, rem);
@@ -2786,7 +3036,7 @@ function showAuth() {
 /* after sign-in: open the saved library, or ask where the files are */
 async function enterApp(user) {
   S.user = user;
-  try { S.secret = JSON.parse(lsGet('console-secret:' + user.id, '{}')) || {}; S.hideGroups = JSON.parse(lsGet('console-hide:' + user.id, '[]')) || []; } catch (e) { S.secret = {}; S.hideGroups = []; }
+  try { S.secret = JSON.parse(lsGet('console-secret:' + user.id, '{}')) || {}; S.hideGroups = (JSON.parse(lsGet('console-hide:' + user.id, '[]')) || []).filter((g) => g !== 'music'); } catch (e) { S.secret = {}; S.hideGroups = []; }
   applyProfile();
   setScanning(true, 'Signing you in…');
   await sleep(350);
