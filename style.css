@@ -585,30 +585,8 @@ body.no-detail .detail{display:none}
 .p-vol{position:relative;display:flex}
 .p-pop{position:absolute;bottom:100%;left:50%;padding-bottom:10px;transform:translate(-50%,8px);opacity:0;visibility:hidden;z-index:40;transition:opacity .18s ease,transform .18s ease,visibility 0s .18s}
 .p-vol:hover .p-pop{opacity:1;visibility:visible;transform:translate(-50%,0);transition-delay:0s}
-.p-popbox{padding:8px 11px;border:1px solid var(--line2);border-radius:12px;background:var(--bg);box-shadow:var(--shadow)}
+.p-popbox{padding:8px 9px;border:1px solid var(--line2);border-radius:12px;background:var(--bg);box-shadow:var(--shadow)}
 .p-popbox input[type=range]{display:block;writing-mode:vertical-lr;direction:rtl;width:4px;height:92px;flex:none;min-width:0;background:linear-gradient(to top,var(--text) var(--p,0%),var(--baroff) var(--p,0%))}
-@container (max-width:700px){
-  .p-left{flex:0 1 215px}
-}
-@container (max-width:620px){
-  .p-seek span:first-child{display:none}
-  .p-left{flex:0 1 195px}
-}
-@container (max-width:520px){
-  .p-cover{display:none}
-  .p-seek span{display:none}
-  .p-left{flex:0 1 150px}
-}
-@container (max-width:440px){
-  .p-sub{display:none}
-  .p-left{flex:0 1 72px}
-}
-@container (max-width:400px){
-  .p-left{display:none}
-}
-@container (max-width:330px){
-  #pprev,#pnext{display:none}
-}
 @media (hover:none){.p-pop{display:none}}
 
 /* sliding block (Drive fields) */
@@ -734,7 +712,8 @@ body{overflow-x:hidden}
 
 /* ===== round 12 ===== */
 /* warning: red background, white text */
-.toast{background:#d93a35;color:#fff;border:0;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+.toast{background:#d93a35;color:#fff;border:0;box-shadow:none;transform:translate(-50%,64px);transition:opacity .35s ease,transform .5s cubic-bezier(.2,.8,.2,1)}
+.toast.show{transform:translate(-50%,0)}
 
 /* checkbox: a plain circle that fills in */
 .chk .box{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--line2);position:relative}
@@ -765,8 +744,7 @@ body{overflow-x:hidden}
 /* list: selected row is only highlighted, its title stays regular */
 
 /* player: the buttons sit in the middle of the space between the title and the time line */
-.p-ctl{flex:1 1 100px;min-width:96px;justify-content:center}
-.p-seek{flex:2 1 120px;position:relative}
+.p-seek{position:relative}
 .seek-tip{position:absolute;bottom:calc(100% + 6px);left:0;transform:translateX(-50%);padding:4px 8px;border-radius:7px;background:var(--bg);border:1px solid var(--line2);font-size:11.5px;font-weight:500;color:var(--text);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .1s;box-shadow:var(--shadow);z-index:5}
 .seek-tip.on{opacity:1}
 .authbox .dlg-drive input{width:100%;min-width:0;box-sizing:border-box}
@@ -816,3 +794,178 @@ body{overflow-x:hidden}
 .fb-row>i:last-child{font-size:10px;color:var(--muted)}
 .fb-empty{margin:auto;color:var(--muted);font-size:13px;text-align:center;padding:20px}
 .fb .dlg-sub{text-align:left}
+
+/* ===== round 14 ===== */
+/* sign in / create account: the first design again, aligned to the left */
+.authleft{text-align:left;align-items:stretch;width:min(400px,100%)}
+.authleft .dlg-mark{align-self:flex-start;margin:0 0 6px}
+.authleft .dlg-h{justify-content:flex-start;text-align:left}
+.authleft .dlg-h>div{width:auto}
+.authleft .dlg-sub{text-align:left}
+.authleft .atabs{justify-content:flex-start}
+.authleft .dlg-drive label{text-align:left;align-items:stretch}
+.authleft .dlg-drive input,.authleft .dlg-drive input:focus{text-align:left;padding:0 16px}
+.authleft .dlg-drive input::placeholder{text-align:left}
+.authleft .xin>div{display:flex;justify-content:flex-start}
+.authleft .dlg-drive label.chk{justify-content:flex-start}
+
+/* player: the time line takes everything that is left; things drop out one by one (see fitPlayer in app.js) only when it would get shorter than 110px */
+.player{gap:10px 24px}
+.p-left{flex:0 1 auto;max-width:clamp(170px,40cqw,360px);min-width:0}
+.p-ctl{flex:0 0 auto;min-width:0}
+.p-seek{flex:1 1 0;min-width:0;position:relative}
+.p-seek input[type=range]{min-width:0}
+.player.lv1 .p-seek span:first-child{display:none}
+.player.lv2 .p-seek span{display:none}
+.player.lv4 .p-cover{display:none}
+.player.lv5 .p-sub{display:none}
+.player.lv6 .p-left{display:none}
+.player.lv7 #pprev,.player.lv7 #pnext{display:none}
+.p-sub.link{cursor:pointer}
+.p-ctl .iconbtn:disabled{opacity:.3;cursor:default;pointer-events:none}
+
+/* round 15 */
+/* Home: albums only, the details panel stays on the right at every width */
+body.no-detail .detail{display:flex}
+.home{--cv:max(64px,min(calc((100cqh - 256px) / 3),calc((100cqw - 20px - 66px) / 4)));grid-template-columns:minmax(0,1fr);gap:0}
+@container (max-width:759px){.home{--cv:calc((100cqw - 20px - 66px) / 4);gap:0}}
+@container (max-width:419px){.home{--cv:calc((100cqw - 20px - 22px) / 2)}}
+.home-main{display:block}
+.home-main .alb-grid{flex:0 0 auto;grid-template-rows:none;align-content:start;row-gap:24px}
+/* everything that looks like an item reacts to the pointer over its whole surface */
+.row,.row *,.alb,.alb *,.rrow,.track,.track *,.row .lead,.row .lead *{cursor:pointer}
+/* menu from the left menu: text only, as wide as the text */
+.ctx.plain{min-width:0}
+.ctx.plain button{gap:18px;padding:9px 14px;white-space:nowrap}
+.ctx.plain button .ck{margin-left:auto}
+/* video volume */
+.vbar .vvol{width:58px;flex:0 0 auto}
+
+.ctx button.on{background:var(--hover)}
+.ctx button .ck{display:none}
+
+/* round 17: checkbox without animation, row centred between the password field and the button */
+.chk .box,.chk .box::after{transition:none!important}
+.authleft .chk{line-height:18px}
+.authleft .chk>span:not(.box){line-height:18px;display:block;transform:translateY(.5px)}
+.home{--cv:max(64px,min(calc((100cqh - 256px) / 3),calc((100cqw - 66px) / 4)))}
+@media (min-width:701px){.home-main .alb-grid{grid-template-columns:repeat(4,var(--cv))}}
+.authleft .xtra.xin.open{margin-top:6px}
+.ctx{display:flex;flex-direction:column;gap:4px}
+@media (min-width:701px){.home-main .alb-grid{justify-content:space-between}}
+
+/* round 18 */
+.eng{text-align:left;position:relative}
+.eng .dlg-h{justify-content:flex-start;text-align:left;padding-right:40px}
+.eng .dlg-h>div{width:auto}
+.eng .dlg-sub,.eng .eng-note{text-align:left}
+.eng [data-e="close"]{position:absolute;top:16px;right:16px;margin:0}
+
+/* round 19: sign in / sign up */
+.authleft .atabs{display:none}
+.authleft .dlg-mark{align-self:center;margin:0 auto 6px}
+.authleft .dlg-h{justify-content:center;text-align:center}
+.authleft .dlg-sub{text-align:center}
+.authleft .xin>div,.authleft .dlg-drive label.chk{justify-content:center}
+.authleft .dlg-drive .fld{position:relative;display:block}
+.authleft .dlg-drive .fld>i{position:absolute;left:17px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--muted);pointer-events:none}
+.authleft .dlg-drive .fld input,.authleft .dlg-drive .fld input:focus{padding:0 16px 0 44px}
+.auth-swap{margin:2px 0 0;display:flex;justify-content:center;gap:6px;font-size:13px;color:var(--muted)}
+.auth-swap button{background:none;border:0;padding:0;font:inherit;color:var(--text);cursor:pointer}
+.auth-swap button:hover{color:var(--text);background:none}
+/* choose source buttons: text and icon sit exactly in the middle */
+.dlg-opts .ghost{padding-top:2px}
+.split.one{grid-template-columns:1fr}
+/* engineering menu: the cross is level with the title, the same space above and below */
+.eng{padding:22px 24px 22px}
+.eng .dlg-h{align-items:flex-start}
+.eng .dlg-h h3{line-height:28px}
+.eng [data-e="close"]{top:22px;right:22px}
+.authleft .dlg-drive .fld{width:100%}.authleft .dlg-drive .fld input{width:100%;box-sizing:border-box}
+
+/* round 20 */
+.fb .dlg-h{justify-content:center;text-align:center}
+.fb .dlg-h>div{width:100%}
+.fb .dlg-sub{text-align:center}
+.fb-crumbs{justify-content:center}
+
+.home-main .alb-grid{column-gap:16px;row-gap:20px}
+.home{--cv:max(64px,min(calc((100cqh - 232px) / 3),calc((100cqw - 48px) / 4)))}
+
+/* round 21 */
+.authleft #authGo,.authleft.up #authGo{margin-top:0}
+.auth-swap{display:block!important;text-align:center;gap:0!important;margin:2px 0 0;color:var(--muted)!important}
+.auth-swap button{display:inline;margin:0!important;font-weight:400;color:var(--text)!important}
+.ctx button i{line-height:1;height:16px;display:inline-flex;align-items:center;justify-content:center;transform:translateY(-.5px)}
+
+/* round 22: centered head, left-aligned underline fields */
+.dlg-hint{font-size:13px;color:var(--muted);text-align:center;margin:-4px 0 0!important;line-height:1.5}
+.dlg-box.authleft{gap:0;width:min(400px,100%)}
+.authleft .dlg-mark{font-size:28px;margin:0 auto 24px;align-self:center}
+.authleft .dlg-h h3{font-size:28px;line-height:34px;font-weight:700;letter-spacing:-.01em}
+.authleft .dlg-sub{margin:6px 0 0!important;font-size:14px}
+.authleft .dlg-h{margin-bottom:36px}
+.authleft #authForm{gap:0}
+.authleft #authForm label{display:flex;flex-direction:column;gap:2px;padding:14px 0 8px;border-bottom:1px solid var(--line2);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);text-align:left;transition:border-color .2s}
+.authleft #authForm label:focus-within{border-bottom-color:var(--text)}
+.authleft #authForm .xtra{margin-top:0}
+.authleft #authForm .xtra label{width:100%}
+.authleft #authForm .two{gap:24px;align-content:end}
+.dlg-box.authleft .dlg-drive input,.dlg-box.authleft .dlg-drive input:focus,.dlg-box.authleft .dlg-drive input:hover{height:28px;padding:0;border:0;border-radius:0;background:transparent;font-size:16px;letter-spacing:0;text-transform:none;color:var(--text);text-align:left;width:100%}
+.dlg-box.authleft .dlg-drive input::placeholder{color:var(--muted);opacity:.7;text-align:left}
+.authleft #authGo,.authleft.up #authGo{margin-top:36px;height:48px;border-radius:999px}
+.authleft #authErr{margin:14px 0 -22px;text-align:center}
+.auth-swap{margin:20px 0 0!important;text-align:center}
+.ctx button i.fa-book{transform:translateY(-1.5px)}
+
+/* round 23: one question at a time */
+.dlg-box.authq{width:min(420px,calc(100% - 32px));padding:0;gap:0;min-height:372px;position:relative;text-align:left;background:transparent;border:0;box-shadow:none;overflow:visible;display:flex;flex-direction:column}
+.authq .aq-top{display:flex;justify-content:space-between;align-items:center;height:28px}
+.authq .dlg-mark{font-size:26px;margin:0;align-self:auto;line-height:1}
+.authq .aq-step{display:flex;align-items:center;gap:10px;font-size:12px;letter-spacing:.08em;color:var(--muted)}
+.authq .aq-back{width:26px;height:26px;border:0;background:none;color:var(--muted);border-radius:50%;cursor:pointer;display:grid;place-items:center;font-size:12px;opacity:0;pointer-events:none;transition:opacity .25s,color .15s}
+.authq .aq-back.on{opacity:1;pointer-events:auto}.authq .aq-back:hover{color:var(--text)}
+.authq #authForm{margin-top:86px;display:block}
+.authq .aq-lab{display:block;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.authq .aq-h{font-size:30px;line-height:36px;font-weight:700;letter-spacing:-.02em;margin:10px 0 0}
+.authq .aq-stack{display:grid;margin-top:34px;min-height:118px}
+.authq .aq-pane{grid-area:1/1;opacity:0;visibility:hidden;transform:translateX(28px);transition:opacity .32s ease,transform .38s cubic-bezier(.4,0,.2,1),visibility 0s .38s}
+.authq .aq-pane[data-pos="before"]{transform:translateX(-28px)}
+.authq .aq-pane[data-pos="active"]{opacity:1;visibility:visible;transform:none;transition:opacity .32s ease .06s,transform .38s cubic-bezier(.4,0,.2,1) .06s,visibility 0s}
+.authq .aq-row{display:grid;grid-template-columns:1fr auto;gap:20px;align-items:center;border-bottom:1px solid var(--text);height:46px}
+.authq .aq-row.r3{grid-template-columns:1fr 1fr auto}
+.authq .aq-row+.aq-row{margin-top:14px}
+.authq .aq-row[hidden]{display:none}
+.authq .aq-row.r3{border-bottom:0}
+.authq .aq-row.r3 input{border-bottom:1px solid var(--text)!important;height:46px!important}
+.authq .aq-row.r3 .qgo{align-self:center}
+.authq .aq-row span{display:contents}
+.dlg-box.authq input,.dlg-box.authq input:focus,.dlg-box.authq input:hover{min-width:0;height:44px;padding:0;border:0;border-radius:0;background:transparent;font-size:20px;color:var(--text);text-align:left;width:100%;box-shadow:none;outline:0}
+.dlg-box.authq input::placeholder{color:var(--text);opacity:.3}
+.authq .qgo{width:34px;height:34px;border-radius:50%;border:0;background:var(--inv,var(--text));color:var(--invtext,var(--bg));display:grid;place-items:center;cursor:pointer;font-size:14px;padding:0;transition:none}
+.authq .qgo:hover{transform:none}.authq .qgo:disabled{opacity:.5}
+.authq .aq-foot{margin-top:auto;padding-top:56px;display:flex;justify-content:space-between;align-items:center}
+.authq .auth-swap{margin:0!important;text-align:left}
+.authq .aq-dots{display:flex;gap:6px}.authq .aq-dots i{width:6px;height:6px;border-radius:50%;background:var(--line2);transition:background .25s}.authq .aq-dots i.on{background:var(--text)}
+
+/* round 24: source and folder screens share the new left-aligned layout */
+.dlg .dlg-box.src{width:min(420px,calc(100% - 32px));text-align:left;align-items:stretch;gap:0;padding:26px 24px}
+.dlg.solid .dlg-box.src{padding:0}
+.src .aq-top{display:flex;justify-content:space-between;align-items:center;height:28px}
+.src .dlg-mark{font-size:26px;margin:0;line-height:1;align-self:auto}
+.src .dlg-h{justify-content:flex-start;text-align:left;margin-top:56px}
+.src .dlg-h>div{width:100%}
+.src .dlg-h h3{font-size:30px;line-height:36px;font-weight:700;letter-spacing:-.02em}
+.dlg .src .dlg-sub,.dlg .src .dlg-hint{font-size:14px;line-height:20px;color:var(--muted);text-align:left;margin:8px 0 0!important}
+.src .dlg-opts{margin-top:30px}
+.src .slide.open>.dlg-drive,.src #dgWrap>.dlg-drive{padding-top:22px;gap:14px}
+.src .dlg-drive .dlg-hint{margin:0!important}
+.src .dlg-drive .primary,.src .ask-btns .primary{height:48px;border-radius:999px}
+.src .ask-btns .ghost{height:48px;border-radius:999px}
+.src .linkbtn{align-self:flex-start;padding:0;text-align:left}
+.src .fb-crumbs{justify-content:flex-start;margin-top:26px;margin-bottom:10px}
+.src .fb-list{margin-bottom:18px}
+.src .dlg-drive p.auth-err{text-align:left;margin:0}
+.src .dlg-drive{padding-bottom:6px}
+.src .linkbtn{line-height:24px;height:24px}
+.src .dlg-drive label{text-align:left}

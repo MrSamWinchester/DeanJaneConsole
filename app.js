@@ -23,6 +23,7 @@ const extOf = (n) => { const i = n.lastIndexOf('.'); return i < 0 ? '' : n.slice
 const baseName = (n) => { const i = n.lastIndexOf('.'); return i <= 0 ? n : n.slice(0, i); };
 const dirOf = (p) => { const i = p.lastIndexOf('/'); return i < 0 ? '' : p.slice(0, i); };
 const has = (rx, s) => rx.test(s);
+let JUST_REGISTERED = false;
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } };
 /* every profile has its own connected folder */
 const srcKey = () => 'console-source:' + ((S.user && S.user.id) || '');
@@ -132,7 +133,7 @@ const SECTIONS = [
 const SEC = Object.fromEntries(SECTIONS.map((s) => [s.id, s]));
 /* hidden twins of two sections: Demos -> Early Demos (folder "Early Demos" inside Demos),
    Discography -> Unreleased Discography (folder "Unreleased Discography" inside Discography) */
-const SECRET = { demo: { label: 'Early Demos', rx: /^early[\s_-]*demos?$/i }, disc: { label: 'Unreleased Discography', rx: /^unreleased(?:[\s_-]*discography)?$/i } };
+const SECRET = { demo: { label: 'Early Demos', rx: /^early[\s_-]*demos?$/i }, disc: { label: 'Unreleased Discography', rx: /^unreleased(?:[\s_-]*discography)?$/i }, lyrics: { label: 'Unreleased Lyrics', rx: /^unreleased(?:[\s_-]*lyrics?)?$/i } };
 const secLabel = (s) => (SECRET[s.id] && S.secret[s.id] ? SECRET[s.id].label : s.label);
 const groupHidden = (it) => { const g = SEC[it.section] && SEC[it.section].group; return !!g && S.hideGroups.includes(g); };
 /* what the whole console shows: no hidden files, no secret folders, no sections switched off in the Engineering menu */
@@ -173,12 +174,12 @@ const S = {
   base: [], items: [], albums: [], byUid: new Map(), byPath: new Map(), uid: 1,
   idx: { byAlbumTitle: new Map(), byTitle: new Map() },
   section: 'home', query: '', sort: 'date',
-  secret: {}, hideGroups: [],
+  secret: {}, memo: {}, hideGroups: [],
   selected: null, now: null, queue: [], videoItem: null,
   meta: { favs: {}, notes: {}, dates: {}, history: [], last: '' },
-  theme: lsGet('vault-theme', 'dark'),
+  theme: lsGet('vault-theme-manual', '') || (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
   vol: Number(lsGet('vault-vol', '70')),
-  muted: false, scanning: false
+  muted: false, vvol: Number(lsGet('vault-vvol', '70')), vmuted: false, scanning: false
 };
 
 /* ================= classification ================= */
@@ -221,7 +222,11 @@ function albumNameOf(it) {
   const segs = it.dir ? it.dir.split('/') : [];
   for (const rx of tries) {
     const i = segs.findIndex((s) => rx.test(s));
-    if (i >= 0) return i + 1 < segs.length ? segs[i + 1] : '';
+    if (i >= 0) {
+      let j = i + 1;
+      if (it.section === 'lyrics' && segs[j] && SECRET.lyrics.rx.test(segs[j])) j++; /* Lyrics/Unreleased Lyrics/<album> */
+      return j < segs.length ? segs[j] : '';
+    }
   }
   return '';
 }
@@ -230,7 +235,11 @@ function albumKey(it) {
   const segs = it.dir ? it.dir.split('/') : [];
   const i = segs.findIndex((s) => has(RX.disc, s));
   if (i < 0) return null;
-  if (RX.discContainer.test(segs[i])) return segs.length > i + 1 ? segs.slice(0, i + 2).join('/') : null;
+  if (RX.discContainer.test(segs[i]) || SECRET.disc.rx.test(segs[i])) {
+    let j = i + 1;
+    if (!SECRET.disc.rx.test(segs[i]) && segs[j] && SECRET.disc.rx.test(segs[j])) j++; /* Discography/Unreleased Discography/<album> */
+    return segs.length > j ? segs.slice(0, j + 1).join('/') : null;
+  }
   return segs.slice(0, i + 1).join('/');
 }
 
@@ -619,7 +628,7 @@ function visible() {
   return gs.flatMap((g) => g.items);
 }
 function kindLabel(it) {
-  if (it.kind === 'album') return 'Album';
+  if (it.kind === 'album') return (S.meta.atype && S.meta.atype[it.path]) || 'Album';
   if (it.album) return 'Track';
   const audioish = it.kind === 'audio' ? 'Track' : 'File';
   const m = { demo: 'Demo', lyrics: 'Lyrics', disc: audioish, video: 'Video', lyricvideo: 'Lyric Video', docs: 'Document', n_notes: 'Note', n_bib: 'Novel', n_video: 'Video', n_docs: 'Document', other: audioish };
@@ -1130,27 +1139,15 @@ function scheduleHome() {
 const HOME_RANK = new Map();
 const homeRank = (al) => { const k = al.title; if (!HOME_RANK.has(k)) HOME_RANK.set(k, Math.random()); return HOME_RANK.get(k); };
 function homeHtml() {
-  const items = S.items.filter(visibleItem);
-  /* a random order that is drawn once per page load and then stays, whatever dates arrive later */
-  const albums = S.albums.filter(visibleItem).sort((x, y) => homeRank(x) - homeRank(y));
+  const albums = sortItems(S.albums.filter(visibleItem)); /* the same order as the Discography list */
   const coverOf = (al) => (al.cover ? `<img alt="" decoding="sync" src="${coverUrl(al.cover)}">` : '<i class="fa-solid fa-compact-disc"></i>');
   const grid = albums.slice(0, 12).map((al) => `<button class="alb" data-open="${al.uid}"><span class="cv">${coverOf(al)}</span><b>${esc(al.title)}</b><small>${esc(monthYear(getDate(al)))}</small></button>`).join('');
-  const recent = items.filter((i) => !(i.kind === 'audio' && i.section === 'disc')).sort((x, y) => y.modified - x.modified).slice(0, 40);
-  const KIND_LABEL = { lyrics: 'Lyrics', demo: 'Demo', disc: 'Track', docs: 'Document', n_docs: 'Document', video: 'Video', n_video: 'Video', lyricvideo: 'Lyric Video', n_notes: 'Note', n_bib: 'Novel' };
-  const row = (it) => {
-    const alb = it.kind === 'album';
-    const sub = (SEC[alb ? 'disc' : it.section] || SEC.other).label;
-    return `<button class="rrow" data-pick="${it.uid}"><span class="ri"><i class="fa-solid ${alb ? 'fa-compact-disc' : iconOf(it)}"></i></span><span class="rt"><b>${esc(it.title)}</b><small>${esc(sub)}</small></span><span class="rd">${esc(monthYear(getDate(it)))}</span></button>`;
-  };
+  const rows = Math.min(3, Math.ceil(Math.min(albums.length, 12) / 4));
   return `<div class="home">
     <section class="hsec home-main">
       <div class="hsec-h"><span>Discography</span></div>
-      ${albums.length ? `<div class="alb-grid">${grid}</div>` : '<div class="hint-line">No albums yet.</div>'}
+      ${albums.length ? `<div class="alb-grid" data-rows="${rows}">${grid}</div>` : ''}
     </section>
-    <aside class="home-side">
-      <div class="hsec-h"><span>Recent</span></div>
-      <div class="rec">${recent.length ? recent.map(row).join('') : '<div class="hint-line">Nothing here yet.</div>'}</div>
-    </aside>
   </div>`;
 }
 
@@ -1175,11 +1172,7 @@ const REC_ROW = 68; /* same row pitch as the Discography list: 64px row + 4px ga
 const REC_GAP = 4;
 function fitRecent() {
   const rec = $('.rec'), g = $('.alb-grid'), home = $('.home'), list = $('#list');
-  /* Home is exactly as tall as the list: the albums and Recent end level with the buttons at the bottom of the menu */
-  if (home && list) {
-    if (list.clientWidth - 20 >= 760 && list.clientHeight > 0) { home.style.boxSizing = 'border-box'; home.style.height = list.clientHeight + 'px'; home.style.minHeight = '0'; }
-    else { home.style.height = ''; home.style.minHeight = ''; }
-  }
+  if (home) { home.style.height = ''; home.style.minHeight = ''; }
   if (!rec || !g) return;
   if (!g.offsetHeight) return;
   const h = Math.floor(g.getBoundingClientRect().bottom - rec.getBoundingClientRect().top); /* Recent ends exactly where the albums end */
@@ -1207,6 +1200,7 @@ function renderList() {
     el._home = hh;
     el.innerHTML = hh;
     fitRecent();
+    requestAnimationFrame(fitRecent); setTimeout(fitRecent, 400);
     el.scrollTop = st;
     refreshRowStates();
     markSelectedRow();
@@ -1217,12 +1211,13 @@ function renderList() {
   const flat = visible();
   $('#count').textContent = flat.length + '/' + totalFiles;
   if (!flat.length) {
-    el.innerHTML = `<div class="empty-list">${searching ? 'Nothing found.' : 'Nothing in this section yet.'}</div>`;
+    el.innerHTML = '';
     return;
   }
   if (L.cols) {
-    const col = (c, empty) => `<div class="col"><div class="col-h"><span>${c.title}</span><span>${c.groups.reduce((n, g) => n + g.items.length, 0)}</span></div>${c.groups.length ? groupsHtml(c.groups) : `<div class="empty-list sm">${empty}</div>`}</div>`;
-    el.innerHTML = `<div class="split">${col(L.cols[0], 'No videos here yet.')}${col(L.cols[1], 'No lyric videos here yet.')}</div>`;
+    const col = (c) => `<div class="col"><div class="col-h"><span>${c.title}</span><span>${c.groups.reduce((n, g) => n + g.items.length, 0)}</span></div>${groupsHtml(c.groups)}</div>`;
+    const cs = L.cols.filter((c) => c.groups.some((g) => g.items.length)); /* a column with nothing in it is not shown */
+    el.innerHTML = `<div class="split${cs.length === 1 ? ' one' : ''}">${cs.map(col).join('')}</div>`;
   } else el.innerHTML = groupsHtml(L.groups);
   el.scrollTop = st;
   refreshRowStates();
@@ -1236,6 +1231,7 @@ document.addEventListener('click', (e) => {
   if (!t.closest || !t.closest('.main,.side')) return;
   if (t.closest('.player,.top,button,a,input,textarea,label,.row,.alb,.rrow,.mini,[data-pick],[data-open],[data-go],[data-act],.seg,.sortbar,#ctx')) return;
   S.selected = null;
+  memoSel(null);
   markSelectedRow();
   renderDetail();
 });
@@ -1274,10 +1270,13 @@ function renderAll() {
   renderPlayer();
 }
 
-function go(sec, keepQuery) {
+function go(sec, keepQuery, secretOk) {
   S.section = sec;
   setMenuOpen(false);
-  if (S.selected) { S.selected = null; renderDetail(); }
+  if (!secretOk) S.secret = {}; /* the second variants (Early Demos, Unreleased Discography) open only from the context menu */
+  S.selected = null;
+  restoreSel();
+  renderDetail();
   if (!keepQuery) { S.query = ''; $('#search').value = ''; }
   renderNav(); renderHead(); renderList();
   $('#list').scrollTop = 0;
@@ -1292,14 +1291,32 @@ function addHistory(it) {
   S.meta.history = h.slice(0, 20);
   saveMeta();
 }
+/* every section remembers its last selected item while you walk through the menu (not the second variants) */
+function memoSel(it) {
+  if (S.section === 'home' || S.secret[S.section]) return;
+  if (it) S.memo[S.section] = it.path; else delete S.memo[S.section];
+}
+function restoreSel() {
+  if (S.section === 'home' || S.secret[S.section] || !S.vault) return;
+  const p = S.memo[S.section];
+  const it = p ? S.byPath.get(p) : null;
+  if (it && visible().includes(it)) S.selected = it; else delete S.memo[S.section];
+}
 function selectItem(it, opts) {
   S.selected = it;
+  memoSel(it);
   addHistory(it);
   markSelectedRow();
   renderDetail(opts || {});
   if (window.matchMedia('(max-width:1000px)').matches) setDetailOpen(true);
 }
 
+/* the playing item gets selected (and its details open) when it is in the list you are looking at */
+function selectPlaying(it) {
+  const t = (it && it.album) || it;
+  if (!t || S.selected === t || !visible().includes(t)) return;
+  selectItem(t);
+}
 function rowPlay(it) {
   if (it.kind === 'video') {
     if (S.selected === it && videoEl) toggleVideo();
@@ -1310,10 +1327,12 @@ function rowPlay(it) {
     if (!it.tracks.length) return;
     if (isNow(it)) toggleAudio();
     else playAudioItem(it.tracks[0], it.tracks);
+    selectPlaying(it);
     return;
   }
   if (S.now === it) toggleAudio();
   else playAudioItem(it, queueFor(it));
+  selectPlaying(it);
 }
 function queueFor(it) {
   if (it.album) return it.album.tracks;
@@ -1330,13 +1349,20 @@ let seeking = false;
 
 function applyVolume() {
   audio.volume = S.muted ? 0 : S.vol / 100;
-  if (videoEl) videoEl.volume = audio.volume;
+}
+function applyVideoVolume() {
+  if (videoEl) videoEl.volume = S.vmuted ? 0 : S.vvol / 100;
+  const v = $('#vvol');
+  if (v) { v.value = S.vvol; setFill(v); }
+  const ic = $('#vbox [data-act="vmute"] i');
+  if (ic) ic.className = 'fa-solid ' + (S.vmuted || S.vvol === 0 ? 'fa-volume-xmark' : S.vvol < 40 ? 'fa-volume-low' : 'fa-volume-high');
 }
 
 function playAudioItem(it, queue, startAt) {
   addHistory(it);
   if (videoEl && !videoEl.paused) videoEl.pause();
-  S.now = it;
+  S.now = it; S.idle = false;
+  lsSet('console-last:' + (S.user ? S.user.id : ''), it.path);
   S.queue = queue && queue.includes(it) ? queue : [it];
   freeUrl(audioUrl);
   audioUrl = fileUrl(it.file);
@@ -1349,6 +1375,7 @@ function playAudioItem(it, queue, startAt) {
 }
 function toggleAudio() {
   if (!S.now) return;
+  if (S.idle) { playAudioItem(S.now, S.queue); return; }
   if (audio.paused) audio.play().catch(() => {}); else audio.pause();
 }
 function step(dir, auto) {
@@ -1356,7 +1383,7 @@ function step(dir, auto) {
   if (dir < 0 && audio.currentTime > 3) { audio.currentTime = 0; return; }
   const i = S.queue.indexOf(S.now);
   const next = S.queue[i + dir];
-  if (next) playAudioItem(next, S.queue);
+  if (next) { playAudioItem(next, S.queue); if (!auto) selectPlaying(next); }
   else if (auto) { audio.pause(); audio.currentTime = 0; updateTimeUI(); }
   else if (dir < 0) audio.currentTime = 0;
 }
@@ -1385,20 +1412,88 @@ function setFill(r) {
   r.style.setProperty('--p', (max > 0 ? (Number(r.value) / max) * 100 : 0) + '%');
 }
 
+/* the player is always there: the last played track, or the first track of the first album by date; no discography - no player */
+function idleTrack() {
+  const last = lsGet('console-last:' + (S.user ? S.user.id : ''), '');
+  const t = last && S.base.find((x) => x.path === last && x.kind === 'audio' && x.file);
+  if (t) return t;
+  const albums = S.items.filter((i) => i.kind === 'album' && !i.hidden && !i.secret && i.tracks && i.tracks.length);
+  albums.sort((a, b) => dateTs(getDate(a)) - dateTs(getDate(b)) || natural.compare(a.title, b.title));
+  return albums.length ? albums[0].tracks[0] : null;
+}
 function renderPlayer() {
   const p = $('#player');
+  if (!S.now && S.vault) {
+    const t = idleTrack();
+    if (t) { S.now = t; S.queue = t.album ? t.album.tracks : [t]; S.idle = true; }
+  }
   const it = S.now;
   if (!it) { p.hidden = true; return; }
   p.hidden = false;
   $('#ptitle').textContent = it.title;
-  $('#psub').textContent = it.album ? it.album.title : kindLabel(it);
+  const sub = $('#psub');
+  sub.textContent = it.album ? it.album.title : kindLabel(it);
+  sub.classList.toggle('link', !!it.album);
+  const qi = S.queue.indexOf(it);
+  $('#pprev').disabled = qi <= 0;
+  $('#pnext').disabled = qi < 0 || qi >= S.queue.length - 1;
   const cov = $('#pcover');
   const cover = it.album && it.album.cover;
   if (cover) cov.innerHTML = `<img alt="" decoding="sync" src="${coverUrl(cover)}">`;
   else cov.innerHTML = `<i class="fa-solid ${it.album ? 'fa-compact-disc' : iconOf(it)}"></i>`;
   updateTimeUI();
   const vol = $('#pvol'); vol.value = S.vol; setFill(vol);
+  fitPlayer();
 }
+/* the time line gets everything that is left; parts of the player drop out one by one only when it would get shorter than SEEK_MIN */
+const SEEK_MIN = 110;
+function fitPlayer() {
+  const p = $('#player');
+  if (!p || p.hidden) return;
+  for (let i = 1; i <= 7; i++) p.classList.remove('lv' + i);
+  const bar = $('#pseek'), left = $('.p-left');
+  left.style.maxWidth = '';
+  $('.p-right').style.marginRight = '';
+  const w = () => bar.getBoundingClientRect().width;
+  let lv = 0;
+  const add = () => { lv++; p.classList.add('lv' + lv); };
+  while (lv < 2 && w() < SEEK_MIN) add(); /* current time, then total time */
+  if (w() < SEEK_MIN) { /* the title block gives up exactly as much as the line needs (down to 150px) */
+    lv = 3; p.classList.add('lv3');
+    left.style.maxWidth = Math.max(150, left.getBoundingClientRect().width - (SEEK_MIN - w())) + 'px';
+  }
+  while (lv < 7 && w() < SEEK_MIN) add(); /* cover, subtitle, the whole title block, prev/next */
+  centerVolume();
+}
+/* the speaker icon sits exactly between the end of the time line (or its total time) and the right edge of the plate */
+function centerVolume() {
+  const p = $('#player'), pr = $('.p-right'), ic = $('#pmute i');
+  if (!p || p.hidden || !pr || !ic) return;
+  pr.style.marginRight = '';
+  const tt = $('#ptotal');
+  let end;
+  if (tt && getComputedStyle(tt).display !== 'none') { const rg = document.createRange(); rg.selectNodeContents(tt); end = rg.getBoundingClientRect().right; } /* where the digits really end */
+  else end = $('#pseek').getBoundingClientRect().right;
+  const g = ic.getBoundingClientRect(), pl = p.getBoundingClientRect();
+  if (!g.width) return;
+  const leftGap = g.left - end, rightGap = pl.right - 1 - g.right;
+  pr.style.marginRight = Math.round(leftGap - rightGap) + 'px';
+}
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => fitPlayer());
+window.addEventListener('load', () => fitPlayer());
+if (window.ResizeObserver) new ResizeObserver(() => fitPlayer()).observe($('#player'));
+function openAlbum(al) {
+  if (!al) return;
+  const sec = al.section;
+  if (S.section !== sec || !!S.secret[sec] !== !!al.secret) {
+    S.secret = {}; if (al.secret) S.secret[sec] = true;
+    go(sec, false, true);
+  }
+  selectItem(al);
+  const r = document.querySelector('#list .row[data-uid="' + al.uid + '"]');
+  if (r) r.scrollIntoView({ block: 'nearest' });
+}
+$('#psub').addEventListener('click', () => { if (S.now && S.now.album) openAlbum(S.now.album); });
 
 function updateTimeUI() {
   const it = S.now;
@@ -1406,7 +1501,7 @@ function updateTimeUI() {
     const d = isFinite(audio.duration) && audio.duration ? audio.duration : (it.dur || 0);
     const c = audio.currentTime || 0;
     $('#pcur').textContent = fmt(c);
-    $('#ptotal').textContent = fmt(d);
+    const tot = fmt(d); if ($('#ptotal').textContent !== tot) { $('#ptotal').textContent = tot; centerVolume(); }
     const seek = $('#pseek');
     seek.max = d || 0;
     if (!seeking) { seek.value = c; }
@@ -1518,7 +1613,7 @@ function setupVideo(it, autoplay) {
   videoUrl = fileUrl(it.file);
   videoEl.src = videoUrl;
   S.videoItem = it;
-  applyVolume();
+  applyVideoVolume();
   const seek = $('#vseek');
   const box = $('#vbox');
   const applyAspect = () => {
@@ -1746,6 +1841,8 @@ function mediaHtml(it) {
       <div class="vbar">
         <input type="range" id="vseek" min="0" max="1000" step="1" value="0" aria-label="Seek video">
         <span id="vtime">0:00</span>
+        <button data-act="vmute" aria-label="Mute"><i class="fa-solid fa-volume-high"></i></button>
+        <input type="range" class="vvol" id="vvol" min="0" max="100" step="1" value="70" aria-label="Volume">
         <button data-act="vfs" aria-label="Fullscreen"><i class="fa-solid fa-expand"></i></button>
       </div>
     </div>`;
@@ -1843,15 +1940,11 @@ function setDetailOpen(on) { $('#detail').classList.toggle('open', on); $('#app'
 function setMenuOpen(on) { $('.side').classList.toggle('open', on); $('#app').classList.toggle('menu-open', on); fitBrand(); }
 function applyDetailWidth() {
   const app = $('#app');
+  const prevW = $('#detail').getBoundingClientRect().width;
   const it = S.selected;
   const home = S.section === 'home' && !S.query.trim();
-  const wide = !home && !!it && it.kind === 'text' && WIDE_SECS.has(it.section) && window.innerWidth > 1000;
-  if (wide) app.style.setProperty('--detail-w', 'min(' + (DETAIL_W[it.section] || 914) + 'px, calc(100vw - 600px))');
-  else if (S.section === 'lyrics' && window.innerWidth > 1000) app.style.setProperty('--detail-w', DETAIL_W.lyrics + 'px');
-  else app.style.removeProperty('--detail-w');
-  const hide = home && window.innerWidth > 1000 && window.innerWidth < HOME_DETAIL_MIN;
-  if (hide) app.style.setProperty('--detail-w', '0px');
-  document.body.classList.toggle('no-detail', hide);
+  app.style.removeProperty('--detail-w'); /* one width for every section */
+  document.body.classList.remove('no-detail');
 }
 
 /* ---- the date is plain text; a click turns it into an input (no visible button) ---- */
@@ -1964,7 +2057,8 @@ function openCtx(x, y, rows) {
   closeCtx();
   const m = document.createElement('div');
   m.id = 'ctx'; m.className = 'ctx'; m.setAttribute('role', 'menu');
-  m.innerHTML = rows.map((r, i) => `<button type="button" role="menuitem" data-i="${i}" class="${r.on ? 'on' : ''}${r.danger ? ' danger' : ''}"><i class="fa-solid ${r.icon}"></i><span>${esc(r.label)}</span>${r.on ? '<i class="fa-solid fa-check ck"></i>' : ''}</button>`).join('');
+  m.classList.toggle('plain', !rows.some((r) => r.icon));
+  m.innerHTML = rows.map((r, i) => `<button type="button" role="menuitem" data-i="${i}" class="${r.on ? 'on' : ''}${r.danger ? ' danger' : ''}">${r.icon ? `<i class="fa-solid ${r.icon}"></i>` : ''}<span>${esc(r.label)}</span></button>`).join('');
   document.body.appendChild(m);
   const w = m.offsetWidth, h = m.offsetHeight;
   m.style.left = Math.max(8, Math.min(x, innerWidth - w - 8)) + 'px';
@@ -1977,20 +2071,19 @@ function openCtx(x, y, rows) {
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCtx(); });
 function toggleSecret(sec) {
   S.secret[sec] = !S.secret[sec];
-  lsSet('console-secret:' + (S.user ? S.user.id : ''), JSON.stringify(S.secret));
+  Object.keys(SECRET).forEach((k) => { if (k !== sec) S.secret[k] = false; });
   if (S.selected) S.selected = null;
-  renderDetail();
-  if (S.section === sec) { renderNav(); renderHead(); renderList(); $('#list').scrollTop = 0; runSwap(); } else go(sec);
+  if (S.section === sec) { restoreSel(); renderDetail(); renderNav(); renderHead(); renderList(); $('#list').scrollTop = 0; runSwap(); } else go(sec, false, true);
 }
 $('#nav').addEventListener('contextmenu', (e) => {
   const b = e.target.closest('button[data-sec]');
   if (!b || !SECRET[b.dataset.sec] || !S.vault) return;
   e.preventDefault();
   const sec = b.dataset.sec, on = !!S.secret[sec];
-  const pick = (want) => () => { if (!!S.secret[sec] !== want) toggleSecret(sec); else go(sec); };
+  const pick = (want) => () => { if (want) { if (on && S.section === sec) return; S.secret[sec] = false; toggleSecret(sec); } else go(sec, true); };
   openCtx(e.clientX, e.clientY, [
-    { label: SEC[sec].label, icon: SEC[sec].icon, on: !on, run: pick(false) },
-    { label: SECRET[sec].label, icon: SEC[sec].icon, on: on, run: pick(true) }
+    { label: SEC[sec].label, on: !on, run: pick(false) },
+    { label: SECRET[sec].label, on: on, run: pick(true) }
   ]);
 });
 
@@ -2043,24 +2136,29 @@ async function gdWriteReady() {
 }
 
 function movePathMeta(from, to) {
-  ['favs', 'notes', 'dates'].forEach((k) => { const m = S.meta[k]; if (m && m[from] !== undefined) { m[to] = m[from]; delete m[from]; } });
+  ['favs', 'notes', 'dates', 'atype'].forEach((k) => { const m = S.meta[k]; if (m && m[from] !== undefined) { m[to] = m[from]; delete m[from]; } });
   S.meta.history = (S.meta.history || []).map((p) => (p === from ? to : p));
   if (S.meta.last === from) S.meta.last = to;
   saveMeta();
 }
 function stopIfPlaying(it) { if (S.now && it && (S.now === it || S.now.path === it.path)) { try { audio.pause(); } catch (e) { /* ignore */ } } }
-async function afterFileChange() {
-  S.selected = null;
-  await refresh();
+/* after a change the list is updated here, right away; the folder itself is read again on the next start */
+function applyLocalChange(selPath) {
+  classifyAll();
+  S.selected = selPath ? (S.byPath.get(selPath) || null) : null;
+  const m = {};
+  Object.keys(S.memo).forEach((k) => { if (S.byPath.get(S.memo[k])) m[k] = S.memo[k]; });
+  S.memo = m;
   renderAll();
-  renderDetail();
 }
+const joinDir = (d, n) => (d ? d + '/' : '') + n;
 async function fileRename(it) {
-  const name = it.file.name;
-  const dot = name.lastIndexOf('.');
+  const isAlbum = it.kind === 'album';
+  const name = isAlbum ? it.title : it.file.name;
+  const dot = isAlbum ? -1 : name.lastIndexOf('.');
   const ext = dot > 0 ? name.slice(dot) : '';
   const base = dot > 0 ? name.slice(0, dot) : name;
-  const v = await askDialog({ title: 'Rename', sub: ext ? 'The extension ' + ext + ' stays.' : '', value: base, ok: 'Rename', input: true });
+  const v = await askDialog({ title: isAlbum ? 'Rename Album' : 'Rename', sub: isAlbum ? 'The folder of the album gets this name.' : (ext ? 'The extension ' + ext + ' stays.' : ''), value: base, ok: 'Rename', input: true });
   if (v === null) return;
   const nn = String(v).trim();
   if (!nn || FILE_ILLEGAL.test(nn) || /[. ]$/.test(nn)) { warn('That name cannot be used'); return; }
@@ -2068,16 +2166,34 @@ async function fileRename(it) {
   if (full === name) return;
   stopIfPlaying(it);
   try {
+    let driveId = '';
+    if (isAlbum) {
+      const t = it.tracks.find((x) => x.dir === it.path && x.file && x.file.parent);
+      driveId = t ? t.file.parent : '';
+      if (!(DESK && S.desk) && !driveId) { warn('Could not find the folder on Google Drive'); return; }
+    }
     if (DESK && S.desk) {
-      const r = await DESK.file.rename(it.file.rel, full);
+      const r = await DESK.file.rename(isAlbum ? it.path : it.file.rel, full);
       if (!r || !r.ok) { warn((r && r.message) || 'Could not rename'); return; }
     } else {
       if (!(await gdWriteReady())) return;
-      await gdFetch(GD_API + '/drive/v3/files/' + it.file.id + '?supportsAllDrives=true', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: full }) });
+      const apiName = !isAlbum && it.file.isDoc ? nn : full;
+      await gdFetch(GD_API + '/drive/v3/files/' + (isAlbum ? driveId : it.file.id) + '?supportsAllDrives=true', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: apiName }) });
     }
-    const d = it.path.lastIndexOf('/');
-    movePathMeta(it.path, (d >= 0 ? it.path.slice(0, d + 1) : '') + full);
-    await afterFileChange();
+    const oldPath = it.path;
+    const newPath = joinDir(dirOf(oldPath), full);
+    const moved = isAlbum ? S.base.filter((x) => x.path.startsWith(oldPath + '/')) : [it];
+    movePathMeta(oldPath, newPath);
+    moved.forEach((x) => {
+      const np = isAlbum ? newPath + x.path.slice(oldPath.length) : newPath;
+      if (isAlbum) movePathMeta(x.path, np);
+      x.path = np; x.dir = dirOf(np);
+      if (!isAlbum) { x.name = full; x.title = baseName(full); }
+      if (x.file) { if (!isAlbum) x.file.name = full; if (x.file.rel !== undefined) x.file.rel = np; }
+      x._hay = null;
+    });
+    Object.keys(S.memo).forEach((k) => { if (S.memo[k] === oldPath) S.memo[k] = newPath; else if (isAlbum && S.memo[k].startsWith(oldPath + '/')) S.memo[k] = newPath + S.memo[k].slice(oldPath.length); });
+    applyLocalChange(S.selected && (S.selected === it || S.selected.path === oldPath) ? newPath : (S.selected ? S.selected.path : ''));
   } catch (e) { warn(e.status === 403 ? 'Google Drive did not allow the change' : (e.message || 'Could not rename')); }
 }
 async function fileDelete(it) {
@@ -2093,7 +2209,12 @@ async function fileDelete(it) {
       if (!(await gdWriteReady())) return;
       await gdFetch(GD_API + '/drive/v3/files/' + it.file.id + '?supportsAllDrives=true', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashed: true }) });
     }
-    await afterFileChange();
+    const keep = S.selected && S.selected !== it && !(S.selected.kind === 'album' && S.selected.tracks.length === 1 && S.selected.tracks[0] === it) ? S.selected.path : '';
+    S.base = S.base.filter((x) => x !== it);
+    S.queue = S.queue.filter((x) => x !== it);
+    if (S.now === it) { S.now = null; renderPlayer(); }
+    Object.keys(S.memo).forEach((k) => { if (S.memo[k] === it.path) delete S.memo[k]; });
+    applyLocalChange(keep);
   } catch (e) { warn(e.status === 403 ? 'Google Drive did not allow the change' : (e.message || 'Could not delete')); }
 }
 function fileOpenOnline(it) {
@@ -2105,6 +2226,7 @@ function fileMenuRows(it) {
   if (!it || !canEditFiles()) return [];
   const rows = [];
   if (it.kind === 'album') {
+    rows.push({ label: 'Rename', icon: 'fa-pen', run: () => fileRename(it) });
     if (DESK && S.desk) rows.push({ label: revealLabel(), icon: 'fa-folder-open', run: () => DESK.file.reveal(it.path) });
     return rows;
   }
@@ -2115,12 +2237,33 @@ function fileMenuRows(it) {
   rows.push({ label: 'Delete', icon: 'fa-trash', danger: true, run: () => fileDelete(it) });
   return rows;
 }
+/* the lyrics file that belongs to a song of an album */
+function lyricsOf(t) {
+  const list = S.items.filter((x) => x.section === 'lyrics' && visibleItem(x));
+  return list.find((x) => x.linkTrack === t) || list.find((x) => normT(x.title) === normT(t.title)) || null;
+}
 document.addEventListener('contextmenu', (e) => {
+  const eb = e.target.closest && e.target.closest('#detail .eyebrow');
+  if (eb && S.vault && S.selected && S.selected.kind === 'album') {
+    const al = S.selected, cur = kindLabel(al);
+    e.preventDefault();
+    openCtx(e.clientX, e.clientY, ['Album', 'Single', 'EP', 'Compilation'].map((n) => ({ label: n, on: cur === n, run: () => {
+      S.meta.atype = S.meta.atype || {};
+      if (n === 'Album') delete S.meta.atype[al.path]; else S.meta.atype[al.path] = n;
+      saveMeta(); renderDetail();
+    } })));
+    return;
+  }
   const t = e.target.closest && e.target.closest('.row,.track,.rrow,.alb');
   if (!t || !S.vault) return;
   const uid = +(t.dataset.uid || t.dataset.open || t.dataset.pick);
-  const it = S.byUid.get(uid);
-  const rows = fileMenuRows(it);
+  const it = S.byUid.get(uid) || S.base.find((x) => x.uid === uid);
+  const rows = [];
+  if (t.classList.contains('track') && it && it.kind === 'audio') {
+    const ly = lyricsOf(it);
+    if (ly) rows.push({ label: 'Read Lyrics', icon: 'fa-book', run: () => { S.secret = {}; go('lyrics', false, true); selectItem(ly); const r = document.querySelector('#list .row[data-uid="' + ly.uid + '"]'); if (r) r.scrollIntoView({ block: 'nearest' }); } });
+  }
+  rows.push(...fileMenuRows(it));
   if (!rows.length) return;
   e.preventDefault();
   openCtx(e.clientX, e.clientY, rows);
@@ -2131,7 +2274,7 @@ function openEngDialog() {
   const n = Object.keys((S.meta && S.meta.dates) || {}).length;
   const d = document.createElement('div');
   d.className = 'dlg'; d.id = 'dlg';
-  d.innerHTML = `<div class="dlg-box" role="dialog" aria-label="Engineering">
+  d.innerHTML = `<div class="dlg-box eng" role="dialog" aria-label="Engineering">
     <div class="dlg-h"><div><h3>Engineering</h3><p class="dlg-sub">Test tools. Dates set by hand: ${n}</p></div><button class="iconbtn sm" data-e="close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></div>
     <div class="eng-list">
       <button class="ghost" data-e="export"><i class="fa-solid fa-file-arrow-down"></i>Export Dates</button>
@@ -2141,7 +2284,7 @@ function openEngDialog() {
       <p class="eng-cap">Menu Sections</p>
       ${GROUPS.map((g) => `<label class="chk${g.id === 'music' ? ' locked' : ''}"><input type="checkbox" data-grp="${g.id}" ${S.hideGroups.includes(g.id) ? '' : 'checked'} ${g.id === 'music' ? 'disabled' : ''}><i class="box"></i><span>${esc(g.label)}</span></label>`).join('')}
     </div>
-    <p class="eng-note">Export saves every date you changed. Import puts them back by file path, so it also works after a new build or on another device.</p>
+    <p class="eng-note">Export saves every date you changed. Import puts them back by file path, so it also works after a new build or on another device</p>
     <input type="file" id="engFile" accept=".json,application/json" hidden>
   </div>`;
   document.body.appendChild(d);
@@ -2211,7 +2354,7 @@ $('#folderBtn').addEventListener('click', pickFolder);
 $('#refreshBtn').addEventListener('click', refresh);
 $('#themeBtn').addEventListener('click', () => {
   const next = S.theme === 'dark' ? 'light' : 'dark';
-  const apply = () => { S.theme = next; applyTheme(); };
+  const apply = () => { S.theme = next; lsSet('vault-theme-manual', next); applyTheme(); };
   if (!document.startViewTransition) { apply(); return; }
   const r = $('#themeBtn').getBoundingClientRect();
   const x = r.left + r.width / 2, y = r.top + r.height / 2;
@@ -2281,6 +2424,7 @@ detailEl.addEventListener('click', (e) => {
       break;
     }
     case 'vplay': toggleVideo(); break;
+    case 'vmute': S.vmuted = !S.vmuted; applyVideoVolume(); break;
     case 'vfs': { const box = $('#vbox'); if (box && box.requestFullscreen) box.requestFullscreen().catch(() => {}); break; }
     case 'stamp': insertStamp(); break;
     case 'open-file': openFile(it); break;
@@ -2296,6 +2440,8 @@ detailEl.addEventListener('input', (e) => {
     const v = e.target.value;
     if (v.trim()) S.meta.notes[it.path] = v; else delete S.meta.notes[it.path];
     saveMeta();
+  } else if (e.target.id === 'vvol') {
+    S.vvol = Number(e.target.value); S.vmuted = false; lsSet('vault-vvol', String(S.vvol)); applyVideoVolume();
   } else if (e.target.id === 'vseek' && videoEl && videoEl.duration) {
     videoEl.currentTime = (e.target.value / 1000) * videoEl.duration;
     setFill(e.target);
@@ -2323,13 +2469,6 @@ document.addEventListener('scroll', (e) => {
 $('#pplay').addEventListener('click', toggleAudio);
 $('#pprev').addEventListener('click', () => step(-1, false));
 $('#pnext').addEventListener('click', () => step(1, false));
-$('#pclose').addEventListener('click', () => {
-  audio.pause();
-  S.now = null; S.queue = [];
-  audio.removeAttribute('src');
-  audio.load();
-  renderPlayer(); refreshRowStates(); updateDetailPlayState(); updateDetailTime(); drawWave();
-});
 const pseek = $('#pseek');
 pseek.addEventListener('pointerdown', () => { seeking = true; });
 window.addEventListener('pointerup', () => { seeking = false; });
@@ -2589,7 +2728,7 @@ async function gdFetch(url, opts, retry = true) {
 /* behaves like a File for the rest of the app, but reads from Drive */
 class DriveFile {
   constructor(m) {
-    this.id = m.id; this.name = m.name; this.mime = m.mimeType || '';
+    this.id = m.id; this.name = m.name; this.mime = m.mimeType || ''; this.parent = (m.parents && m.parents[0]) || '';
     this.isDoc = this.mime === GD_DOC;
     this.size = Number(m.size) || 0;
     this.lastModified = Date.parse(m.modifiedTime) || 0;
@@ -2674,7 +2813,7 @@ async function gdWalk(rootId, onCount) {
   return entries;
 }
 const gdSig = (entries) => entries.map((e) => e.path + '|' + e.file.id + '|' + e.file.lastModified + '|' + e.file.size).sort().join('\n');
-const gdPack = (entries) => entries.map((e) => ({ path: e.path, name: e.name, m: { id: e.file.id, name: e.name, mimeType: e.file.mime, size: String(e.file.size), modifiedTime: new Date(e.file.lastModified).toISOString() } }));
+const gdPack = (entries) => entries.map((e) => ({ path: e.path, name: e.name, m: { id: e.file.id, parents: e.file.parent ? [e.file.parent] : [], name: e.name, mimeType: e.file.mime, size: String(e.file.size), modifiedTime: new Date(e.file.lastModified).toISOString() } }));
 function gdFolderId(s) {
   s = String(s || '').trim();
   const m = s.match(/\/folders\/([\w-]{10,})/) || s.match(/[?&]id=([\w-]{10,})/);
@@ -2761,16 +2900,16 @@ function openSourceDialog(required, note) {
   const d = document.createElement('div');
   d.className = 'dlg' + (required ? ' solid' : ''); d.id = 'dlg';
   if (required) d.dataset.req = '1';
-  d.innerHTML = `<div class="dlg-box" role="dialog" aria-label="Choose Source">
-    ${required ? '<i class="fa-brands fa-pied-piper dlg-mark"></i>' : ''}
-    <div class="dlg-h"><div><h3>Choose Source</h3>${required ? '<p class="dlg-sub">Where are your files? You can change this later.</p>' : ''}</div>${required ? '' : '<button class="iconbtn sm" data-d="close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>'}</div>
+  d.innerHTML = `<div class="dlg-box src" role="dialog" aria-label="Choose Source">
+    <div class="aq-top"><i class="fa-brands fa-pied-piper dlg-mark"></i>${required ? '' : '<button class="iconbtn sm" data-d="close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>'}</div>
+    <div class="dlg-h"><div><h3>Choose Source</h3><p class="dlg-sub">Where are your files? You can change this later</p></div></div>
     <div class="dlg-opts">
       <button class="ghost" data-d="local"><i class="fa-solid fa-computer"></i>This Computer</button>
       <button class="ghost ${S.source === 'drive' || (!DESK && gdClientId()) ? 'on' : ''}" data-d="drive"><i class="fa-brands fa-google-drive"></i>Google Drive</button>
     </div>
     <div class="slide ${S.source === 'drive' || (!DESK && gdClientId()) ? 'open' : ''}" id="dgWrap" ${S.source === 'drive' || (!DESK && gdClientId()) ? '' : 'inert'}><div class="dlg-drive" id="dgForm">
       ${DESK ? '' : `<label>OAuth Client ID<input id="dgClient" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="123456789-abc.apps.googleusercontent.com" value="${esc(gdClientId())}" autocomplete="off"></label>`}
-      <p class="dlg-hint">Sign in with Google, then choose any folder. The console only reads your files.</p>
+      <p class="dlg-sub dlg-hint">Sign in with Google, then choose any folder</p>
       <p class="auth-err" id="dgErr" ${note ? '' : 'hidden'}>${esc(note || '')}</p>
       <button class="primary" data-d="connect"><i class="fa-brands fa-google-drive"></i>Sign In With Google</button>
       <button class="linkbtn" data-d="uselink" type="button">Or paste a folder link</button>
@@ -2846,9 +2985,9 @@ async function openFolderBrowser(required) {
   const d = document.createElement('div');
   d.className = 'dlg fb' + (required ? ' solid' : ''); d.id = 'dlg';
   if (required) d.dataset.req = '1';
-  d.innerHTML = `<div class="dlg-box" role="dialog" aria-label="Choose a Folder">
-    <div class="dlg-h"><div><h3>Choose a Folder</h3><p class="dlg-sub">Open the folder with your files and press Choose.</p></div></div>
-    <div class="atabs" id="fbTabs"></div>
+  d.innerHTML = `<div class="dlg-box src" role="dialog" aria-label="Choose a Folder">
+    <div class="aq-top"><i class="fa-brands fa-pied-piper dlg-mark"></i></div>
+    <div class="dlg-h"><div><h3>Choose a Folder</h3><p class="dlg-sub">Open the folder with your files and press Choose</p></div></div>
     <div class="fb-crumbs" id="fbCrumbs"></div>
     <div class="fb-list" id="fbList"></div>
     <div class="ask-btns"><button type="button" class="ghost" data-f="back">Back</button><button type="button" class="primary" data-f="pick" disabled>Choose This Folder</button></div>
@@ -2856,7 +2995,7 @@ async function openFolderBrowser(required) {
   document.body.appendChild(d);
   const st = { tab: 'my', stack: [], drives: [], seq: 0 };
   const tabs = [['my', 'My Drive'], ['shared', 'Shared With Me']];
-  const drawTabs = () => { $('#fbTabs').innerHTML = tabs.map(([k, l]) => `<button type="button" data-t="${k}" class="${st.tab === k ? 'on' : ''}">${l}</button>`).join(''); };
+  const drawTabs = () => {};
   const drawCrumbs = () => {
     const root = tabs.find((t) => t[0] === st.tab)[1];
     $('#fbCrumbs').innerHTML = [`<button type="button" data-c="-1">${esc(root)}</button>`].concat(st.stack.map((s2, i) => `<i class="fa-solid fa-chevron-right"></i><button type="button" data-c="${i}">${esc(s2.name)}</button>`)).join('');
@@ -2875,9 +3014,12 @@ async function openFolderBrowser(required) {
     box.innerHTML = rows.length ? rows.map((r) => `<button type="button" class="fb-row" data-id="${esc(r.id)}" data-n="${esc(r.name)}"><i class="fa-solid ${r.drive ? 'fa-hard-drive' : 'fa-folder'}"></i><span>${esc(r.name)}</span><i class="fa-solid fa-chevron-right"></i></button>`).join('') : '<p class="fb-empty">No folders here</p>';
   };
   gdSharedDrives().then((dr) => { if (dr.length && d.isConnected) { st.drives = dr; tabs.push(['drives', 'Shared Drives']); drawTabs(); } });
+  /* right click on the folder field switches between My Drive, Shared With Me and Shared Drives */
+  $('#fbCrumbs').addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    openCtx(e.clientX, e.clientY, tabs.map(([k, l]) => ({ label: l, on: st.tab === k, run: () => { st.tab = k; st.stack = []; load(); } })));
+  });
   d.addEventListener('click', (e) => {
-    const t = e.target.closest('[data-t]');
-    if (t) { st.tab = t.dataset.t; st.stack = []; load(); return; }
     const c = e.target.closest('[data-c]');
     if (c) { st.stack = st.stack.slice(0, +c.dataset.c + 1); load(); return; }
     const r = e.target.closest('.fb-row');
@@ -2950,81 +3092,113 @@ function showAuth() {
     const d = document.createElement('div');
     d.className = 'dlg solid'; d.id = 'dlg'; d.dataset.req = '1';
     let mode = 'in';
-    const chk = (id, text, on) => `<label class="chk"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><i class="box"></i><span>${text}</span></label>`;
-    /* built once: switching tabs slides the extra fields open or closed instead of redrawing */
+    const arrow = '<button class="qgo" type="submit" aria-label="Continue"><i class="fa-solid fa-arrow-right"></i></button>';
     const build = () => {
-      d.innerHTML = `<div class="dlg-box authbox hz" role="dialog" aria-label="Account">
-        <aside class="auth-side"><i class="fa-brands fa-pied-piper"></i><div><b>Impala</b><span>Your songs, lyrics and notes in one quiet place.</span></div></aside>
-        <section class="auth-main">
-        <div class="dlg-h"><div><h3 id="aTitle"></h3><p class="dlg-sub" id="aSub"></p></div></div>
-        <form class="dlg-drive" id="authForm" novalidate>
-          <div class="xtra"><div class="two"><input id="aFirst" type="text" placeholder="Dean" aria-label="First Name" autocomplete="given-name" maxlength="40"><input id="aLast" type="text" placeholder="Jane" aria-label="Last Name" autocomplete="family-name" maxlength="40"></div></div>
-          <div class="fld"><i class="fa-solid fa-circle-user"></i><input id="aNick" type="text" placeholder="@DeanJane" aria-label="Nickname" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="25"></div>
-          <div class="fld"><i class="fa-solid fa-lock"></i><input id="aPass" type="password" placeholder="Password" aria-label="Password" autocomplete="current-password"></div>
-          <div class="xtra"><div><div class="fld"><i class="fa-solid fa-lock"></i><input id="aPass2" type="password" placeholder="Repeat Password" aria-label="Repeat Password" autocomplete="new-password"></div></div></div>
-          <div class="xtra xin open"><div>${chk('aRem', 'Remember Me', false)}</div></div>
-          <p class="auth-err" id="authErr" hidden></p>
-          <button class="primary" type="submit" id="authGo"></button>
+      d.innerHTML = `<div class="dlg-box authq" role="dialog" aria-label="Account">
+        <div class="aq-top"><i class="fa-brands fa-pied-piper dlg-mark"></i><div class="aq-step"><button type="button" class="aq-back" id="aBack" aria-label="Back"><i class="fa-solid fa-arrow-left"></i></button><span id="aCount"></span></div></div>
+        <form id="authForm" novalidate>
+          <small class="aq-lab" id="aLab"></small>
+          <h3 class="aq-h" id="aTitle"></h3>
+          <div class="aq-stack">
+            <div class="aq-pane" data-s="first"><div class="aq-row"><input id="aFirst" type="text" placeholder="Dean" autocomplete="given-name" maxlength="40" aria-label="First Name">${arrow}</div></div>
+            <div class="aq-pane" data-s="last"><div class="aq-row"><input id="aLast" type="text" placeholder="Jane" autocomplete="family-name" maxlength="40" aria-label="Last Name">${arrow}</div></div>
+            <div class="aq-pane" data-s="nick"><div class="aq-row"><input id="aNick" type="text" placeholder="@DeanJane" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="25" aria-label="Nickname">${arrow}</div></div>
+            <div class="aq-pane" data-s="pass"><div class="aq-row"><input id="aPass" type="password" placeholder="Password" autocomplete="current-password" aria-label="Password">${arrow}</div></div>
+            <div class="aq-pane" data-s="confirm"><div class="aq-row"><input id="aPass2" type="password" placeholder="Confirm Password" autocomplete="new-password" aria-label="Confirm Password">${arrow}</div></div>
+          </div>
         </form>
-        <p class="auth-swap"><span id="swapTxt"></span><button type="button" id="swapBtn"></button></p>
-        </section>
+        <div class="aq-foot"><p class="auth-swap"><span id="aSwapT"></span> <button type="button" id="aSwapB"></button></p><div class="aq-dots" id="aDots"></div></div>
       </div>`;
       const nick = $('#aNick');
       nick.addEventListener('input', () => fixNick(nick));
     };
-    const setMode = (m, first) => {
-      mode = m;
-      const up = m === 'up';
-      $('#aTitle').textContent = up ? 'Create Your Profile' : 'Welcome Back';
-      $('#aSub').textContent = up ? 'Stored only on this device.' : 'Sign in to open your console.';
-      $('#swapTxt').textContent = up ? 'Already have an account?' : 'New here?';
-      $('#swapBtn').textContent = up ? 'Sign In' : 'Create Account';
-      $('#swapBtn').dataset.m = up ? 'in' : 'up';
-      d.querySelectorAll('.xtra').forEach((x) => { const on = x.classList.contains('xin') ? !up : up; x.classList.toggle('open', on); if (on) x.removeAttribute('inert'); else x.setAttribute('inert', ''); });
+    let steps = ['nick', 'pass'], at = 0;
+    const seqFor = (up) => (up ? ['first', 'last', 'nick', 'pass', 'confirm'] : ['nick', 'pass']);
+    const paint = (focus) => {
+      const up = mode === 'up', name = steps[at], last = at === steps.length - 1;
+      d.firstElementChild.classList.toggle('up', up);
+      $('#aLab').textContent = up ? 'Create Account' : 'Sign In';
+      $('#aTitle').textContent = { first: 'What is your first name?', last: 'And your last name?', confirm: 'Confirm your password', nick: up ? 'Choose a nickname' : 'What is your nickname?', pass: up ? 'Create a password' : 'And your password?' }[name];
+      $('#aCount').textContent = (at + 1) + ' / ' + steps.length;
+      $('#aBack').classList.toggle('on', at > 0);
+      $('#aDots').innerHTML = steps.map((x, i) => `<i class="${i === at ? 'on' : ''}"></i>`).join('');
+      d.querySelectorAll('.aq-pane').forEach((p) => {
+        const i = steps.indexOf(p.dataset.s);
+        const pos = i < 0 ? 'after' : i < at ? 'before' : i === at ? 'active' : 'after';
+        p.dataset.pos = pos;
+        if (pos === 'active') p.removeAttribute('inert'); else p.setAttribute('inert', '');
+      });
       $('#aPass').autocomplete = up ? 'new-password' : 'current-password';
-      $('#authGo').textContent = up ? 'Create Account' : 'Sign In';
-      const e = $('#authErr'); e.hidden = true;
-      if (first || !up) $('#aNick').focus(); else $('#aFirst').focus();
+      $('#aSwapT').textContent = up ? 'Have An Account?' : "Don't Have An Account?";
+      $('#aSwapB').textContent = up ? 'Sign In' : 'Sign Up';
+      $('#aSwapB').dataset.m = up ? 'in' : 'up';
+      if (focus) setTimeout(() => { const p = d.querySelector('.aq-pane[data-pos="active"] input'); if (p) p.focus(); }, 60);
+    };
+    const setMode = (m, first) => {
+      mode = m; steps = seqFor(m === 'up'); at = 0;
+      d.querySelectorAll('.aq-pane').forEach((p) => { p.style.transition = 'none'; });
+      paint(true);
+      void d.offsetWidth;
+      d.querySelectorAll('.aq-pane').forEach((p) => { p.style.transition = ''; });
     };
     const err = (m) => { if (m) warn(m); };
     /* only latin letters, digits and punctuation: no Cyrillic in the sign-in fields */
     d.addEventListener('input', (e) => {
       const t = e.target;
-      if (t && t.matches && t.matches('input[type=text],input[type=password]') && /[\u0400-\u052F]/.test(t.value)) { const p = t.selectionStart; t.value = t.value.replace(/[\u0400-\u052F]/g, ''); try { t.setSelectionRange(p - 1, p - 1); } catch (x) { /* ignore */ } if (t.id === 'aNick') fixNick(t); }
+      if (t && t.matches && t.matches('input[type=text],input[type=password]') && /[Ѐ-ԯ]/.test(t.value)) { const p = t.selectionStart; t.value = t.value.replace(/[Ѐ-ԯ]/g, ''); try { t.setSelectionRange(p - 1, p - 1); } catch (x) { /* ignore */ } }
     });
     d.addEventListener('click', (e) => {
       const b = e.target.closest('[data-m]');
       if (b && b.dataset.m !== mode) setMode(b.dataset.m);
+      if (e.target.closest('#aBack') && at > 0) { at--; paint(true); }
     });
+    /* each step checks only its own answer */
+    const check = (name, users) => {
+      const nick = nickVal($('#aNick')), pass = $('#aPass').value;
+      if (name === 'first') {
+        if (!$('#aFirst').value.trim()) throw new Error('Enter your first name');
+      } else if (name === 'last') {
+        if (!$('#aLast').value.trim()) throw new Error('Enter your last name');
+      } else if (name === 'nick') {
+        if (mode === 'in') { if (!nick) throw new Error('Enter your nickname'); }
+        else {
+          if (!NICK_RX.test(nick)) throw new Error('Nickname: 2–24 letters, digits, dot, dash or underscore');
+          if (users.some((x) => x.nick.toLowerCase() === nick.toLowerCase())) throw new Error('This nickname is already taken');
+        }
+      } else if (mode === 'in') {
+        if (!pass) throw new Error('Enter your password');
+      } else if (name === 'pass') {
+        if (pass.length < 6) throw new Error('Password must be at least 6 characters');
+      } else if (pass !== $('#aPass2').value) throw new Error('Passwords do not match');
+    };
     d.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const go = $('#authGo');
-      const nick = nickVal($('#aNick')), pass = $('#aPass').value, rem = mode === 'in' && $('#aRem').checked;
       const users = getUsers();
-      go.disabled = true;
+      const name = steps[at];
+      try { check(name, users); } catch (ex) { err(ex.message); return; }
+      if (at < steps.length - 1) { at++; paint(true); return; }
+      const btns = d.querySelectorAll('.qgo');
+      btns.forEach((b) => { b.disabled = true; });
+      const nick = nickVal($('#aNick')), pass = $('#aPass').value, rem = true; /* the sign-in is always remembered */
       try {
         if (mode === 'in') {
           const u = users.find((x) => x.nick === nick);
-          if (!nick || !pass) throw new Error('Enter your nickname and password');
           if (!u || (await hashPw(pass, u.salt)) !== u.hash) throw new Error('Wrong nickname or password');
           rememberSession(u, rem);
           d.remove(); resolve(u);
           return;
         }
-        const first = $('#aFirst').value.trim(), last = $('#aLast').value.trim(), pass2 = $('#aPass2').value;
-        if (!first || !last) throw new Error('Enter your first and last name');
-        if (!NICK_RX.test(nick)) throw new Error('Nickname: 2–24 letters, digits, dot, dash or underscore');
-        if (users.some((x) => x.nick.toLowerCase() === nick.toLowerCase())) throw new Error('This nickname is already taken');
-        if (pass.length < 6) throw new Error('Password must be at least 6 characters');
-        if (pass !== pass2) throw new Error('Passwords do not match');
+        const first = $('#aFirst').value.trim(), last = $('#aLast').value.trim();
         const salt = b64(crypto.getRandomValues(new Uint8Array(16)));
         const u = { id: 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), first, last, nick, preferNick: false, salt, hash: await hashPw(pass, salt), created: Date.now() };
         users.push(u); saveUsers(users);
+        JUST_REGISTERED = true;
         rememberSession(u, rem);
         d.remove(); resolve(u);
       } catch (ex) {
         err(ex.message || 'Something went wrong');
-        go.disabled = false;
+        btns.forEach((b) => { b.disabled = false; });
+        if (mode === 'in') { at = 1; paint(true); }
       }
     });
     document.body.appendChild(d);
@@ -3036,11 +3210,17 @@ function showAuth() {
 /* after sign-in: open the saved library, or ask where the files are */
 async function enterApp(user) {
   S.user = user;
-  try { S.secret = JSON.parse(lsGet('console-secret:' + user.id, '{}')) || {}; S.hideGroups = (JSON.parse(lsGet('console-hide:' + user.id, '[]')) || []).filter((g) => g !== 'music'); } catch (e) { S.secret = {}; S.hideGroups = []; }
+  S.secret = {}; S.memo = {};
+  try { S.hideGroups = (JSON.parse(lsGet('console-hide:' + user.id, '["novels"]')) || []).filter((g) => g !== 'music'); } catch (e) { S.hideGroups = []; }
   applyProfile();
-  setScanning(true, 'Signing you in…');
+  setScanning(true);
   await sleep(350);
-  setStatus('Preparing your workspace…');
+  if (JUST_REGISTERED) {
+    JUST_REGISTERED = false;
+    setStatus('Data processing', true);
+    await sleep(1900);
+    LD.sticky = ''; const lm = $('#loaderMsg'); if (lm) { lm.classList.remove('show'); lm.textContent = ''; }
+  }
   let src = null;
   try {
     /* one-time: the folder saved before profiles had their own belongs to the first account */
@@ -3069,6 +3249,7 @@ async function enterApp(user) {
     try { state = await h.queryPermission({ mode: 'read' }); } catch (e) { /* needs a gesture */ }
     if (state === 'granted') { await openHandle(h); return; }
   }
+  await sleep(1100); /* a calm moment of the plain loader before the first question */
   setScanning(false);
   openSourceDialog(true);
 }
@@ -3076,8 +3257,7 @@ async function enterApp(user) {
 /* ================= theme / boot ================= */
 function applyTheme() {
   document.documentElement.setAttribute('data-theme', S.theme);
-  lsSet('vault-theme', S.theme);
-  $('#themeBtn i').className = 'fa-solid ' + (S.theme === 'dark' ? 'fa-sun' : 'fa-moon');
+  $('#themeBtn i').className = 'fa-solid ' + (S.theme === 'dark' ? 'fa-circle-half-stroke' : 'fa-moon');
   drawWave();
 }
 
@@ -3132,7 +3312,9 @@ async function boot1() {
   } catch (e) { /* ignore a broken link */ }
   if (DESK) { try { S.deskG = await DESK.google.status(); } catch (e) { S.deskG = null; } }
   document.body.classList.add('locked');
-  await sleep(450); /* a short, quiet preloader before the sign-in form */
+  const fresh = !sessionUser();
+  if (fresh) setStatus('Preparing for launch', true);
+  await sleep(fresh ? 1800 : 450); /* a short, quiet preloader before the sign-in form */
   let user = sessionUser();
   if (!user) { setScanning(false); user = await showAuth(); }
   await enterApp(user);
